@@ -1,3 +1,4 @@
+const { Op } = require('sequelize');
 const { User } = require('../models');
 const {
   isValidEmail,
@@ -7,6 +8,8 @@ const {
   isBlank,
 } = require('../utils/validators');
 const { generateToken } = require('../utils/token');
+const { generateResetToken, hashResetToken } = require('../utils/resetToken');
+const { sendPasswordResetEmail } = require('../utils/mailer');
 
 const REQUIRED_FIELDS = [
   'first_name',
@@ -142,4 +145,82 @@ async function login(req, res, next) {
   }
 }
 
-module.exports = { register, login };
+async function me(req, res) {
+  const {
+    id, first_name, last_name, email, role,
+  } = req.user;
+
+  return res.status(200).json({
+    id, first_name, last_name, email, role,
+  });
+}
+
+async function forgotPassword(req, res, next) {
+  try {
+    const { email } = req.body;
+
+    if (isBlank(email) || !isValidEmail(email)) {
+      return res.status(400).json({ errors: ['A valid email is required'] });
+    }
+
+    // Always the same response, whether or not the email is registered,
+    // so this endpoint can't be used to enumerate existing accounts.
+    const genericResponse = { message: 'If that email is registered, a password reset link has been sent.' };
+
+    const user = await User.findOne({ where: { email } });
+    if (user) {
+      const { rawToken, hashedToken, expiresAt } = generateResetToken();
+      user.reset_password_token = hashedToken;
+      user.reset_password_expires = expiresAt;
+      await user.save();
+
+      const resetUrl = `${process.env.APP_URL || 'http://localhost:3000'}/reset-password.html?token=${rawToken}`;
+      await sendPasswordResetEmail(user.email, resetUrl);
+    }
+
+    return res.status(200).json(genericResponse);
+  } catch (err) {
+    return next(err);
+  }
+}
+
+async function resetPassword(req, res, next) {
+  try {
+    const { token, password, confirm_password } = req.body;
+
+    const errors = [];
+    if (isBlank(token)) errors.push('token is required');
+    if (isBlank(password)) errors.push('password is required');
+    else if (password.length < 6) errors.push('Password must be at least 6 characters long');
+    if (isBlank(confirm_password)) errors.push('confirm_password is required');
+    else if (password !== confirm_password) errors.push('Passwords do not match');
+
+    if (errors.length > 0) {
+      return res.status(400).json({ errors });
+    }
+
+    const user = await User.findOne({
+      where: {
+        reset_password_token: hashResetToken(token),
+        reset_password_expires: { [Op.gt]: new Date() },
+      },
+    });
+
+    if (!user) {
+      return res.status(400).json({ errors: ['Invalid or expired reset token'] });
+    }
+
+    user.password = password; // hashed automatically by the beforeUpdate hook
+    user.reset_password_token = null;
+    user.reset_password_expires = null;
+    await user.save();
+
+    return res.status(200).json({ message: 'Password has been reset successfully.' });
+  } catch (err) {
+    return next(err);
+  }
+}
+
+module.exports = {
+  register, login, me, forgotPassword, resetPassword,
+};
