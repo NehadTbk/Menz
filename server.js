@@ -2,17 +2,20 @@ require('dotenv').config();
 const path = require('path');
 const express = require('express');
 const cors = require('cors');
+const cookieParser = require('cookie-parser');
 const { sequelize } = require('./models');
 const notFound = require('./middleware/notFound');
 const errorHandler = require('./middleware/errorHandler');
+const authRoutes = require('./routes/authRoutes');
 
 const app = express();
 
 app.use(cors());
 app.use(express.json());
+app.use(cookieParser());
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Routes will be mounted here in later phases
+app.use('/api', authRoutes);
 
 app.use(notFound);
 app.use(errorHandler);
