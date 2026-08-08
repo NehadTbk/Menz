@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Log in — Menz</title>
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <div class="card">
+    <h1>Log in</h1>
+    <p class="subtitle">Welcome back to Menz.</p>
+
+    <div id="message" class="message error"></div>
+
+    <form id="login-form" novalidate>
+      <div class="field">
+        <label for="email">Email</label>
+        <input type="email" id="email" name="email" autocomplete="email" required>
+        <div class="field-error" id="email-error"></div>
+      </div>
+
+      <div class="field">
+        <label for="password">Password</label>
+        <input type="password" id="password" name="password" autocomplete="current-password" required>
+        <div class="field-error" id="password-error"></div>
+      </div>
+
+      <div class="checkbox-row">
+        <input type="checkbox" id="remember_me" name="remember_me">
+        <label for="remember_me" style="margin:0;font-weight:400;">Remember me</label>
+      </div>
+
+      <button type="submit" id="submit-btn">Log in</button>
+    </form>
+
+    <div class="links">
+      <a href="/forgot-password.html">Forgot password?</a>
+      <a href="/register.html">No account yet? Register here</a>
+    </div>
+  </div>
+
+  <script src="/js/validators.js"></script>
+  <script>
+    const form = document.getElementById('login-form');
+    const messageEl = document.getElementById('message');
+    const submitBtn = document.getElementById('submit-btn');
+
+    function showMessage(text) {
+      messageEl.textContent = text;
+      messageEl.classList.add('visible');
+    }
+
+    function clearMessage() {
+      messageEl.classList.remove('visible');
+    }
+
+    function setFieldError(fieldName, text) {
+      const el = document.getElementById(`${fieldName}-error`);
+      if (!el) return;
+      el.textContent = text || '';
+      el.classList.toggle('visible', Boolean(text));
+    }
+
+    function redirectAfterLogin(role) {
+      const params = new URLSearchParams(window.location.search);
+      const redirect = params.get('redirect');
+      if (redirect === 'checkout') {
+        window.location.href = '/checkout.html';
+        return;
+      }
+      if (redirect === 'orders') {
+        window.location.href = '/orders.html';
+        return;
+      }
+      window.location.href = role === 'admin' ? '/admin/dashboard.html' : '/home.html';
+    }
+
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      clearMessage();
+      setFieldError('email', '');
+      setFieldError('password', '');
+
+      const email = document.getElementById('email').value;
+      const password = document.getElementById('password').value;
+      const rememberMe = document.getElementById('remember_me').checked;
+
+      let hasError = false;
+      if (isBlank(email) || !isValidEmail(email)) {
+        setFieldError('email', 'Enter a valid email address');
+        hasError = true;
+      }
+      if (isBlank(password)) {
+        setFieldError('password', 'Password is required');
+        hasError = true;
+      }
+      if (hasError) return;
+
+      submitBtn.disabled = true;
+      try {
+        const response = await fetch('/api/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ email, password, remember_me: rememberMe }),
+        });
+        const data = await response.json();
+
+        if (!response.ok) {
+          showMessage((data.errors && data.errors[0]) || 'Invalid email/password combination');
+          return;
+        }
+
+        redirectAfterLogin(data.role);
+      } catch (err) {
+        showMessage('Something went wrong. Please try again.');
+      } finally {
+        submitBtn.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>

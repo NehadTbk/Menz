@@ -90,6 +90,15 @@ async function register(req, res, next) {
       role: 'client',
     });
 
+    const { token, maxAge } = generateToken({ id: user.id, role: user.role }, false);
+
+    res.cookie('token', token, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      maxAge,
+    });
+
     return res.status(201).json({
       id: user.id,
       first_name: user.first_name,

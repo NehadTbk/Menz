@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Register — Menz</title>
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <div class="card">
+    <h1>Create account</h1>
+    <p class="subtitle">Join Menz to start shopping.</p>
+
+    <div id="message" class="message error"></div>
+
+    <form id="register-form" novalidate>
+      <div class="field-row">
+        <div class="field">
+          <label for="first_name">First name</label>
+          <input type="text" id="first_name" name="first_name" autocomplete="given-name" required>
+          <div class="field-error" id="first_name-error"></div>
+        </div>
+        <div class="field">
+          <label for="last_name">Last name</label>
+          <input type="text" id="last_name" name="last_name" autocomplete="family-name" required>
+          <div class="field-error" id="last_name-error"></div>
+        </div>
+      </div>
+
+      <div class="field">
+        <label for="email">Email</label>
+        <input type="email" id="email" name="email" autocomplete="email" required>
+        <div class="field-error" id="email-error"></div>
+      </div>
+
+      <div class="field">
+        <label for="phone">Phone number</label>
+        <input type="tel" id="phone" name="phone" placeholder="+32 470 12 34 56" autocomplete="tel" required>
+        <div class="field-error" id="phone-error"></div>
+      </div>
+
+      <div class="field-row">
+        <div class="field" style="flex:3;">
+          <label for="street">Street</label>
+          <input type="text" id="street" name="street" autocomplete="address-line1" required>
+          <div class="field-error" id="street-error"></div>
+        </div>
+        <div class="field" style="flex:1;">
+          <label for="house_number">Number</label>
+          <input type="text" id="house_number" name="house_number" autocomplete="address-line2" required>
+          <div class="field-error" id="house_number-error"></div>
+        </div>
+      </div>
+
+      <div class="field-row">
+        <div class="field" style="flex:1;">
+          <label for="postal_code">Postal code</label>
+          <input type="text" id="postal_code" name="postal_code" placeholder="1000" autocomplete="postal-code" required>
+          <div class="field-error" id="postal_code-error"></div>
+        </div>
+        <div class="field" style="flex:2;">
+          <label for="city">City</label>
+          <input type="text" id="city" name="city" autocomplete="address-level2" required>
+          <div class="field-error" id="city-error"></div>
+        </div>
+      </div>
+
+      <div class="field">
+        <label for="password">Password</label>
+        <input type="password" id="password" name="password" autocomplete="new-password" required>
+        <div class="field-error" id="password-error"></div>
+      </div>
+
+      <div class="field">
+        <label for="confirm_password">Confirm password</label>
+        <input type="password" id="confirm_password" name="confirm_password" autocomplete="new-password" required>
+        <div class="field-error" id="confirm_password-error"></div>
+      </div>
+
+      <button type="submit" id="submit-btn">Create account</button>
+    </form>
+
+    <div class="links">
+      <a href="/login.html">Already have an account? Log in</a>
+    </div>
+  </div>
+
+  <script src="/js/validators.js"></script>
+  <script>
+    const form = document.getElementById('register-form');
+    const messageEl = document.getElementById('message');
+    const submitBtn = document.getElementById('submit-btn');
+
+    const FIELDS = [
+      'first_name', 'last_name', 'email', 'phone', 'street', 'house_number',
+      'postal_code', 'city', 'password', 'confirm_password',
+    ];
+
+    function showMessage(text) {
+      messageEl.textContent = text;
+      messageEl.classList.add('visible');
+    }
+
+    function clearMessage() {
+      messageEl.classList.remove('visible');
+    }
+
+    function setFieldError(fieldName, text) {
+      const el = document.getElementById(`${fieldName}-error`);
+      if (!el) return;
+      el.textContent = text || '';
+      el.classList.toggle('visible', Boolean(text));
+    }
+
+    function clearFieldErrors() {
+      FIELDS.forEach((field) => setFieldError(field, ''));
+    }
+
+    function validate(values) {
+      const errors = {};
+
+      FIELDS.forEach((field) => {
+        if (isBlank(values[field])) {
+          errors[field] = 'This field is required';
+        }
+      });
+
+      if (!errors.first_name && !containsNoDigits(values.first_name)) {
+        errors.first_name = 'First name cannot contain digits';
+      }
+      if (!errors.last_name && !containsNoDigits(values.last_name)) {
+        errors.last_name = 'Last name cannot contain digits';
+      }
+      if (!errors.email && !isValidEmail(values.email)) {
+        errors.email = 'Enter a valid email address';
+      }
+      if (!errors.phone && !isValidBelgianPhone(values.phone)) {
+        errors.phone = 'Use a Belgian format, e.g. +32 470 12 34 56 or 0470 12 34 56';
+      }
+      if (!errors.postal_code && !isValidPostalCode(values.postal_code)) {
+        errors.postal_code = 'Postal code must be exactly 4 digits';
+      }
+      if (!errors.password && values.password.length < 6) {
+        errors.password = 'Password must be at least 6 characters long';
+      }
+      if (!errors.confirm_password && values.password !== values.confirm_password) {
+        errors.confirm_password = 'Passwords do not match';
+      }
+
+      return errors;
+    }
+
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      clearMessage();
+      clearFieldErrors();
+
+      const values = {};
+      FIELDS.forEach((field) => {
+        values[field] = document.getElementById(field).value;
+      });
+
+      const errors = validate(values);
+      if (Object.keys(errors).length > 0) {
+        Object.entries(errors).forEach(([field, text]) => setFieldError(field, text));
+        return;
+      }
+
+      submitBtn.disabled = true;
+      try {
+        const response = await fetch('/api/register', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify(values),
+        });
+        const data = await response.json();
+
+        if (!response.ok) {
+          showMessage((data.errors && data.errors[0]) || 'Registration failed. Please try again.');
+          return;
+        }
+
+        window.location.href = '/home.html';
+      } catch (err) {
+        showMessage('Something went wrong. Please try again.');
+      } finally {
+        submitBtn.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>
