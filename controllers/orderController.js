@@ -5,6 +5,7 @@ const { isBlank, isValidPostalCode } = require('../utils/validators');
 
 const SHIPPING_COST = Number(process.env.SHIPPING_COST) || 4.95;
 const DELIVERY_TYPES = ['pickup', 'shipping'];
+const ORDER_STATUSES = ['new', 'processed', 'completed'];
 
 class OrderError extends Error {}
 
@@ -129,4 +130,47 @@ async function create(req, res, next) {
   }
 }
 
-module.exports = { create };
+function isAdminRequest(req) {
+  return Boolean(req.user && req.user.role === 'admin');
+}
+
+async function list(req, res, next) {
+  try {
+    const { status } = req.query;
+    if (!isBlank(status) && !ORDER_STATUSES.includes(status)) {
+      return res.status(400).json({ errors: [`status must be one of ${ORDER_STATUSES.join(', ')}`] });
+    }
+
+    const where = {};
+    if (!isAdminRequest(req)) where.user_id = req.user.id;
+    if (!isBlank(status)) where.status = status;
+
+    const orders = await Order.findAll({
+      where,
+      include: ORDER_INCLUDE,
+      order: [['createdAt', 'DESC']],
+    });
+    return res.status(200).json(orders);
+  } catch (err) {
+    return next(err);
+  }
+}
+
+async function getOne(req, res, next) {
+  try {
+    const order = await Order.findByPk(req.params.id, { include: ORDER_INCLUDE });
+    if (!order) return res.status(404).json({ errors: ['Order not found'] });
+
+    if (!isAdminRequest(req) && order.user_id !== req.user.id) {
+      return res.status(404).json({ errors: ['Order not found'] });
+    }
+
+    return res.status(200).json(order);
+  } catch (err) {
+    return next(err);
+  }
+}
+
+module.exports = {
+  create, list, getOne,
+};

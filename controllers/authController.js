@@ -156,11 +156,11 @@ async function login(req, res, next) {
 
 async function me(req, res) {
   const {
-    id, first_name, last_name, email, role,
+    id, first_name, last_name, email, role, phone, street, house_number, postal_code, city,
   } = req.user;
 
   return res.status(200).json({
-    id, first_name, last_name, email, role,
+    id, first_name, last_name, email, role, phone, street, house_number, postal_code, city,
   });
 }
 
