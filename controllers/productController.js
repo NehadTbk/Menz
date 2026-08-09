@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const { Op } = require('sequelize');
 const {
   sequelize, Product, Category, Size, ProductSize,
 } = require('../models');
@@ -93,12 +94,31 @@ const PRODUCT_INCLUDE = [
   { model: ProductSize, include: [Size] },
 ];
 
+function isAdminRequest(req) {
+  return Boolean(req.user && req.user.role === 'admin');
+}
+
 async function list(req, res, next) {
   try {
-    const products = await Product.findAll({
+    const {
+      category_id, code, limit, offset,
+    } = req.query;
+    const where = {};
+
+    if (!isAdminRequest(req)) where.active = true;
+    if (!isBlank(category_id)) where.category_id = category_id;
+    if (!isBlank(code)) where.code = { [Op.like]: `%${code}%` };
+
+    const queryOptions = {
+      where,
       include: PRODUCT_INCLUDE,
       order: [['createdAt', 'DESC']],
-    });
+    };
+
+    if (!isBlank(limit)) queryOptions.limit = Math.max(0, parseInt(limit, 10) || 0);
+    if (!isBlank(offset)) queryOptions.offset = Math.max(0, parseInt(offset, 10) || 0);
+
+    const products = await Product.findAll(queryOptions);
     return res.status(200).json(products);
   } catch (err) {
     return next(err);
@@ -109,6 +129,11 @@ async function getOne(req, res, next) {
   try {
     const product = await Product.findByPk(req.params.id, { include: PRODUCT_INCLUDE });
     if (!product) return res.status(404).json({ errors: ['Product not found'] });
+
+    if (!product.active && !isAdminRequest(req)) {
+      return res.status(404).json({ errors: ['Product not found'] });
+    }
+
     return res.status(200).json(product);
   } catch (err) {
     return next(err);
