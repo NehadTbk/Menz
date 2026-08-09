@@ -3,6 +3,10 @@ module.exports = (err, req, res, next) => {
     return res.status(400).json({ errors: err.errors.map((e) => e.message) });
   }
 
+  if (err.name === 'MulterError' || err.message.includes('Only JPEG, PNG, WEBP, or GIF')) {
+    return res.status(400).json({ errors: [err.message] });
+  }
+
   console.error(err);
   const status = err.status || 500;
   res.status(status).json({ error: err.message || 'Internal server error' });

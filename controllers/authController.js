@@ -230,6 +230,11 @@ async function resetPassword(req, res, next) {
   }
 }
 
+async function logout(req, res) {
+  res.clearCookie('token');
+  return res.status(200).json({ message: 'Logged out' });
+}
+
 module.exports = {
-  register, login, me, forgotPassword, resetPassword,
+  register, login, me, logout, forgotPassword, resetPassword,
 };

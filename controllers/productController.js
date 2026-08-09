@@ -1,7 +1,10 @@
+const fs = require('fs');
+const path = require('path');
 const {
   sequelize, Product, Category, Size, ProductSize,
 } = require('../models');
 const { isBlank } = require('../utils/validators');
+const { UPLOADS_DIR } = require('../utils/upload');
 
 function isPositiveNumber(value) {
   const n = Number(value);
@@ -13,11 +16,33 @@ function isNonNegativeInt(value) {
   return Number.isInteger(n) && n >= 0;
 }
 
-function validateProductInput(body) {
+function parseMultipartBody(body) {
+  let sizes;
+  if (body.sizes !== undefined) {
+    try {
+      sizes = JSON.parse(body.sizes);
+    } catch (err) {
+      sizes = null;
+    }
+  }
+
+  let { active } = body;
+  if (typeof active === 'string') active = active === 'true';
+
+  return {
+    category_id: body.category_id,
+    name: body.name,
+    description: body.description,
+    price: body.price,
+    active,
+    sizes,
+  };
+}
+
+function validateProductInput({
+  category_id, name, price, sizes,
+}) {
   const errors = [];
-  const {
-    category_id, name, price, sizes,
-  } = body;
 
   if (isBlank(category_id)) errors.push('category_id is required');
   if (isBlank(name)) errors.push('name is required');
@@ -54,6 +79,15 @@ async function validateSizesExist(sizes) {
   return foundSizes.length === new Set(sizeIds.map(String)).size;
 }
 
+function cleanupUploadedFile(req) {
+  if (req.file) fs.unlink(req.file.path, () => {});
+}
+
+function deleteStoredPhoto(photoPath) {
+  if (!photoPath || !photoPath.startsWith('/uploads/')) return;
+  fs.unlink(path.join(UPLOADS_DIR, path.basename(photoPath)), () => {});
+}
+
 const PRODUCT_INCLUDE = [
   { model: Category },
   { model: ProductSize, include: [Size] },
@@ -83,21 +117,30 @@ async function getOne(req, res, next) {
 
 async function create(req, res, next) {
   try {
-    const errors = validateProductInput(req.body);
-    if (errors.length > 0) return res.status(400).json({ errors });
-
     const {
-      category_id, name, description, price, photo, active, sizes = [],
-    } = req.body;
+      category_id, name, description, price, active, sizes,
+    } = parseMultipartBody(req.body);
+
+    const errors = validateProductInput({
+      category_id, name, price, sizes,
+    });
+    if (errors.length > 0) {
+      cleanupUploadedFile(req);
+      return res.status(400).json({ errors });
+    }
 
     const category = await Category.findByPk(category_id);
     if (!category) {
+      cleanupUploadedFile(req);
       return res.status(400).json({ errors: ['category_id does not reference an existing category'] });
     }
 
     if (!(await validateSizesExist(sizes))) {
+      cleanupUploadedFile(req);
       return res.status(400).json({ errors: ['sizes contains an unknown size_id'] });
     }
+
+    const photo = req.file ? `/uploads/${req.file.filename}` : null;
 
     const created = await sequelize.transaction(async (t) => {
       const code = `${category.code}-${String(category.next_product_number).padStart(4, '0')}`;
@@ -114,7 +157,7 @@ async function create(req, res, next) {
 
       await category.increment('next_product_number', { by: 1, transaction: t });
 
-      if (sizes.length > 0) {
+      if (sizes && sizes.length > 0) {
         await ProductSize.bulkCreate(
           sizes.map((s) => ({ product_id: product.id, size_id: s.size_id, stock: s.stock })),
           { transaction: t },
@@ -127,6 +170,7 @@ async function create(req, res, next) {
     const result = await Product.findByPk(created.id, { include: PRODUCT_INCLUDE });
     return res.status(201).json(result);
   } catch (err) {
+    cleanupUploadedFile(req);
     return next(err);
   }
 }
@@ -134,23 +178,36 @@ async function create(req, res, next) {
 async function update(req, res, next) {
   try {
     const product = await Product.findByPk(req.params.id);
-    if (!product) return res.status(404).json({ errors: ['Product not found'] });
-
-    const errors = validateProductInput(req.body);
-    if (errors.length > 0) return res.status(400).json({ errors });
+    if (!product) {
+      cleanupUploadedFile(req);
+      return res.status(404).json({ errors: ['Product not found'] });
+    }
 
     const {
-      category_id, name, description, price, photo, active, sizes,
-    } = req.body;
+      category_id, name, description, price, active, sizes,
+    } = parseMultipartBody(req.body);
+
+    const errors = validateProductInput({
+      category_id, name, price, sizes,
+    });
+    if (errors.length > 0) {
+      cleanupUploadedFile(req);
+      return res.status(400).json({ errors });
+    }
 
     const category = await Category.findByPk(category_id);
     if (!category) {
+      cleanupUploadedFile(req);
       return res.status(400).json({ errors: ['category_id does not reference an existing category'] });
     }
 
     if (!(await validateSizesExist(sizes))) {
+      cleanupUploadedFile(req);
       return res.status(400).json({ errors: ['sizes contains an unknown size_id'] });
     }
+
+    const previousPhoto = product.photo;
+    const photo = req.file ? `/uploads/${req.file.filename}` : product.photo;
 
     await sequelize.transaction(async (t) => {
       product.category_id = category.id;
@@ -172,9 +229,14 @@ async function update(req, res, next) {
       }
     });
 
+    if (req.file && previousPhoto) {
+      deleteStoredPhoto(previousPhoto);
+    }
+
     const result = await Product.findByPk(product.id, { include: PRODUCT_INCLUDE });
     return res.status(200).json(result);
   } catch (err) {
+    cleanupUploadedFile(req);
     return next(err);
   }
 }
@@ -188,6 +250,8 @@ async function remove(req, res, next) {
       await ProductSize.destroy({ where: { product_id: product.id }, transaction: t });
       await product.destroy({ transaction: t });
     });
+
+    deleteStoredPhoto(product.photo);
 
     return res.status(204).send();
   } catch (err) {
