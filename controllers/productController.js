@@ -18,10 +18,10 @@ function isNonNegativeInt(value) {
 }
 
 function parseMultipartBody(body) {
-  let sizes;
-  if (body.sizes !== undefined) {
+  let { sizes } = body;
+  if (typeof sizes === 'string') {
     try {
-      sizes = JSON.parse(body.sizes);
+      sizes = JSON.parse(sizes);
     } catch (err) {
       sizes = null;
     }

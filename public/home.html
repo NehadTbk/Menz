@@ -1,0 +1,412 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Menz — Shop</title>
+  <link rel="stylesheet" href="/css/app.css">
+</head>
+<body>
+  <header class="topbar">
+    <h1>Menz</h1>
+    <div class="topbar-right" id="navbar-right"></div>
+  </header>
+
+  <main>
+    <section>
+      <div class="grid-header">
+        <div class="tabs" id="tabs"></div>
+        <input type="text" class="search-input" id="code-search" placeholder="Search by code (e.g. TSH-0001)">
+      </div>
+      <div class="product-grid" id="product-grid"></div>
+      <div class="empty-state" id="empty-state" hidden>No products found.</div>
+    </section>
+  </main>
+
+  <div class="modal-overlay" id="details-overlay" hidden>
+    <div class="modal">
+      <button type="button" id="details-close-btn" style="float:right;">&times;</button>
+      <h2 id="details-name"></h2>
+      <div class="photo" id="details-photo" style="max-width:220px;max-height:220px;margin-bottom:10px;border:1px solid #000;"></div>
+      <div id="details-code"></div>
+      <div id="details-price"></div>
+      <p id="details-description"></p>
+      <div>
+        <label>Sizes &amp; stock</label>
+        <div id="details-sizes-overview"></div>
+      </div>
+      <div class="size-buttons" id="details-size-buttons" style="margin-top:8px;"></div>
+      <div class="modal-actions">
+        <button type="button" id="details-add-to-cart-btn" disabled>Add to cart</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="cart-overlay" hidden>
+    <div class="modal">
+      <button type="button" id="cart-close-btn" style="float:right;">&times;</button>
+      <h2>Your cart</h2>
+      <div id="cart-lines"></div>
+      <div class="empty-state" id="cart-empty" hidden>Your cart is empty.</div>
+      <div class="cart-total">
+        <span>Total</span>
+        <span id="cart-total-amount">&euro;0.00</span>
+      </div>
+      <div class="modal-actions">
+        <button type="button" id="checkout-btn">Checkout</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const CART_STORAGE_KEY = 'menz_cart';
+
+    const state = {
+      user: null,
+      categories: [],
+      sizes: [],
+      products: [],
+      selectedCategoryId: null,
+      searchQuery: '',
+      cart: [],
+      gridSelection: {},
+      detailsProduct: null,
+      detailsSelectedSizeId: null,
+    };
+
+    const tabsEl = document.getElementById('tabs');
+    const gridEl = document.getElementById('product-grid');
+    const emptyStateEl = document.getElementById('empty-state');
+    const navbarRightEl = document.getElementById('navbar-right');
+    const detailsOverlay = document.getElementById('details-overlay');
+    const cartOverlay = document.getElementById('cart-overlay');
+
+    function escapeHtml(value) {
+      const div = document.createElement('div');
+      div.textContent = value === null || value === undefined ? '' : String(value);
+      return div.innerHTML;
+    }
+
+    async function apiFetch(url, options = {}) {
+      const response = await fetch(url, { credentials: 'include', ...options });
+      let data = null;
+      try {
+        data = await response.json();
+      } catch (err) {
+        data = null;
+      }
+      if (!response.ok) {
+        const error = new Error((data && data.errors && data.errors[0]) || 'Request failed');
+        error.status = response.status;
+        throw error;
+      }
+      return data;
+    }
+
+    function loadCart() {
+      try {
+        const raw = localStorage.getItem(CART_STORAGE_KEY);
+        return raw ? JSON.parse(raw) : [];
+      } catch (err) {
+        return [];
+      }
+    }
+
+    function saveCart() {
+      localStorage.setItem(CART_STORAGE_KEY, JSON.stringify(state.cart));
+    }
+
+    function addToCart(productId, sizeId) {
+      const existing = state.cart.find((line) => line.product_id === productId && line.size_id === sizeId);
+      if (existing) {
+        existing.quantity += 1;
+      } else {
+        state.cart.push({ product_id: productId, size_id: sizeId, quantity: 1 });
+      }
+      saveCart();
+      renderCartBadge();
+    }
+
+    function cartItemCount() {
+      return state.cart.reduce((sum, line) => sum + line.quantity, 0);
+    }
+
+    function findProductById(id) {
+      return state.products.find((p) => p.id === id);
+    }
+
+    function findSizeById(id) {
+      return state.sizes.find((s) => s.id === id);
+    }
+
+    function cartTotal() {
+      return state.cart.reduce((sum, line) => {
+        const product = findProductById(line.product_id);
+        return sum + (product ? Number(product.price) * line.quantity : 0);
+      }, 0);
+    }
+
+    function renderCartBadge() {
+      const badge = document.getElementById('cart-summary-btn');
+      if (badge) {
+        badge.textContent = `Cart (${cartItemCount()}) — €${cartTotal().toFixed(2)}`;
+      }
+    }
+
+    function renderNavbar() {
+      if (state.user) {
+        const roleLink = state.user.role === 'admin'
+          ? '<a href="/admin/dashboard.html">Admin panel</a>'
+          : '<a href="/orders.html">My orders</a>';
+        navbarRightEl.innerHTML = `
+          <span>Welcome, ${escapeHtml(state.user.first_name)}</span>
+          ${roleLink}
+          <button type="button" id="logout-btn">Log out</button>
+          <button type="button" id="cart-summary-btn" class="cart-summary"></button>
+        `;
+        document.getElementById('logout-btn').addEventListener('click', logout);
+      } else {
+        navbarRightEl.innerHTML = `
+          <a href="/login.html">Log in</a>
+          <a href="/register.html">Register</a>
+          <button type="button" id="cart-summary-btn" class="cart-summary"></button>
+        `;
+      }
+      document.getElementById('cart-summary-btn').addEventListener('click', openCartModal);
+      renderCartBadge();
+    }
+
+    async function logout() {
+      await apiFetch('/api/logout', { method: 'POST' });
+      state.user = null;
+      renderNavbar();
+    }
+
+    async function checkAuth() {
+      try {
+        state.user = await apiFetch('/api/me');
+      } catch (err) {
+        state.user = null;
+      }
+    }
+
+    async function loadCategories() {
+      state.categories = await apiFetch('/api/categories');
+    }
+
+    async function loadSizes() {
+      state.sizes = await apiFetch('/api/sizes');
+    }
+
+    async function loadProducts() {
+      state.products = await apiFetch('/api/products');
+    }
+
+    function renderTabs() {
+      const parts = [`<div class="tab ${state.selectedCategoryId === null ? 'active' : ''}" data-select-category="">All</div>`];
+      state.categories.forEach((category) => {
+        const active = state.selectedCategoryId === category.id;
+        parts.push(`<div class="tab ${active ? 'active' : ''}" data-select-category="${category.id}">${escapeHtml(category.name)}</div>`);
+      });
+      tabsEl.innerHTML = parts.join('');
+
+      tabsEl.querySelectorAll('[data-select-category]').forEach((el) => {
+        el.addEventListener('click', () => {
+          const value = el.getAttribute('data-select-category');
+          state.selectedCategoryId = value === '' ? null : Number(value);
+          renderTabs();
+          renderProductGrid();
+        });
+      });
+    }
+
+    function stockForSize(product, sizeId) {
+      const entry = (product.ProductSizes || []).find((ps) => ps.size_id === sizeId || (ps.Size && ps.Size.id === sizeId));
+      return entry ? entry.stock : 0;
+    }
+
+    function buildSizeButtons(product, selectedSizeId, onSelect) {
+      return state.sizes.map((size) => {
+        const stock = stockForSize(product, size.id);
+        const isSelected = selectedSizeId === size.id;
+        return `<button type="button" class="size-btn ${isSelected ? 'selected' : ''}" data-size-id="${size.id}" ${stock === 0 ? 'disabled' : ''}>${escapeHtml(size.name)}</button>`;
+      }).join('');
+    }
+
+    function attachSizeButtonListeners(container, product, onSelect) {
+      container.querySelectorAll('[data-size-id]').forEach((btn) => {
+        btn.addEventListener('click', () => onSelect(Number(btn.getAttribute('data-size-id'))));
+      });
+    }
+
+    function getFilteredProducts() {
+      return state.products.filter((product) => {
+        const matchesCategory = state.selectedCategoryId === null || product.category_id === state.selectedCategoryId;
+        const matchesSearch = !state.searchQuery
+          || product.code.toLowerCase().includes(state.searchQuery.toLowerCase());
+        return matchesCategory && matchesSearch;
+      });
+    }
+
+    function renderProductGrid() {
+      const products = getFilteredProducts();
+      emptyStateEl.hidden = products.length > 0;
+
+      gridEl.innerHTML = products.map((product) => `
+        <div class="product-card" data-product-card="${product.id}">
+          <div class="photo">
+            ${product.photo ? `<img src="${escapeHtml(product.photo)}" alt="${escapeHtml(product.name)}">` : 'No photo'}
+          </div>
+          <div class="body">
+            <div class="code">${escapeHtml(product.code)}</div>
+            <div class="name">${escapeHtml(product.name)}</div>
+            <div class="price">&euro;${Number(product.price).toFixed(2)}</div>
+            <div class="size-buttons" data-size-buttons="${product.id}">
+              ${buildSizeButtons(product, state.gridSelection[product.id])}
+            </div>
+          </div>
+          <div class="actions">
+            <button type="button" data-add-to-cart="${product.id}" ${state.gridSelection[product.id] ? '' : 'disabled'}>Add to cart</button>
+            <button type="button" data-open-details="${product.id}">Details</button>
+          </div>
+        </div>
+      `).join('');
+
+      gridEl.querySelectorAll('[data-size-buttons]').forEach((container) => {
+        const productId = Number(container.getAttribute('data-size-buttons'));
+        const product = findProductById(productId);
+        attachSizeButtonListeners(container, product, (sizeId) => {
+          state.gridSelection[productId] = sizeId;
+          renderProductGrid();
+        });
+      });
+
+      gridEl.querySelectorAll('[data-add-to-cart]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          const productId = Number(btn.getAttribute('data-add-to-cart'));
+          const sizeId = state.gridSelection[productId];
+          if (!sizeId) return;
+          addToCart(productId, sizeId);
+        });
+      });
+
+      gridEl.querySelectorAll('[data-open-details]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          const productId = Number(btn.getAttribute('data-open-details'));
+          openDetailsModal(findProductById(productId));
+        });
+      });
+    }
+
+    function renderDetailsSizeButtons() {
+      const container = document.getElementById('details-size-buttons');
+      container.innerHTML = buildSizeButtons(state.detailsProduct, state.detailsSelectedSizeId);
+      attachSizeButtonListeners(container, state.detailsProduct, (sizeId) => {
+        state.detailsSelectedSizeId = sizeId;
+        renderDetailsSizeButtons();
+        document.getElementById('details-add-to-cart-btn').disabled = false;
+      });
+    }
+
+    function openDetailsModal(product) {
+      state.detailsProduct = product;
+      state.detailsSelectedSizeId = null;
+
+      document.getElementById('details-name').textContent = product.name;
+      const photoEl = document.getElementById('details-photo');
+      photoEl.innerHTML = product.photo
+        ? `<img src="${escapeHtml(product.photo)}" alt="${escapeHtml(product.name)}" style="width:100%;height:100%;object-fit:cover;">`
+        : 'No photo';
+      document.getElementById('details-code').textContent = product.code;
+      document.getElementById('details-price').textContent = `€${Number(product.price).toFixed(2)}`;
+      document.getElementById('details-description').textContent = product.description || 'No description.';
+
+      const overview = state.sizes
+        .map((size) => `${size.name}: ${stockForSize(product, size.id)}`)
+        .join(' · ');
+      document.getElementById('details-sizes-overview').textContent = overview;
+
+      document.getElementById('details-add-to-cart-btn').disabled = true;
+      renderDetailsSizeButtons();
+
+      detailsOverlay.hidden = false;
+    }
+
+    function closeDetailsModal() {
+      detailsOverlay.hidden = true;
+      state.detailsProduct = null;
+      state.detailsSelectedSizeId = null;
+    }
+
+    function renderCartModal() {
+      const linesEl = document.getElementById('cart-lines');
+      const emptyEl = document.getElementById('cart-empty');
+
+      if (state.cart.length === 0) {
+        linesEl.innerHTML = '';
+        emptyEl.hidden = false;
+      } else {
+        emptyEl.hidden = true;
+        linesEl.innerHTML = state.cart.map((line) => {
+          const product = findProductById(line.product_id);
+          const size = findSizeById(line.size_id);
+          if (!product) return '';
+          return `
+            <div class="cart-line">
+              <span>${escapeHtml(product.name)} (${escapeHtml(size ? size.name : '?')}) &times; ${line.quantity}</span>
+              <span>&euro;${(Number(product.price) * line.quantity).toFixed(2)}</span>
+            </div>
+          `;
+        }).join('');
+      }
+
+      document.getElementById('cart-total-amount').textContent = `€${cartTotal().toFixed(2)}`;
+    }
+
+    function openCartModal() {
+      renderCartModal();
+      cartOverlay.hidden = false;
+    }
+
+    function closeCartModal() {
+      cartOverlay.hidden = true;
+    }
+
+    async function handleCheckout() {
+      try {
+        await apiFetch('/api/me');
+        window.location.href = '/checkout.html';
+      } catch (err) {
+        window.location.href = '/login.html?redirect=checkout';
+      }
+    }
+
+    async function init() {
+      state.cart = loadCart();
+
+      await Promise.all([checkAuth(), loadSizes(), loadCategories(), loadProducts()]);
+
+      renderNavbar();
+      renderTabs();
+      renderProductGrid();
+
+      document.getElementById('code-search').addEventListener('input', (e) => {
+        state.searchQuery = e.target.value.trim();
+        renderProductGrid();
+      });
+
+      document.getElementById('details-close-btn').addEventListener('click', closeDetailsModal);
+      document.getElementById('details-add-to-cart-btn').addEventListener('click', () => {
+        if (!state.detailsSelectedSizeId) return;
+        addToCart(state.detailsProduct.id, state.detailsSelectedSizeId);
+        closeDetailsModal();
+      });
+
+      document.getElementById('cart-close-btn').addEventListener('click', closeCartModal);
+      document.getElementById('checkout-btn').addEventListener('click', handleCheckout);
+    }
+
+    init();
+  </script>
+</body>
+</html>
