@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>My orders — Menz</title>
+  <link rel="stylesheet" href="/css/app.css">
+</head>
+<body id="page" hidden>
+  <header class="topbar">
+    <h1><a href="/home.html" style="text-decoration:none;color:inherit;">Menz</a></h1>
+    <div class="topbar-right"><a href="/home.html">Back to shop</a></div>
+  </header>
+
+  <main>
+    <section>
+      <h2>My orders</h2>
+      <div class="tabs" id="status-tabs"></div>
+    </section>
+
+    <section>
+      <div id="orders-list"></div>
+      <div class="empty-state" id="empty-state" hidden>No orders found.</div>
+    </section>
+  </main>
+
+  <div class="modal-overlay" id="detail-overlay" hidden>
+    <div class="modal">
+      <button type="button" id="detail-close-btn" style="float:right;">&times;</button>
+      <h2 id="detail-title"></h2>
+      <p id="detail-meta"></p>
+      <div id="detail-items"></div>
+      <p id="detail-address" hidden></p>
+      <div class="cart-total"><span>Total</span><span id="detail-total"></span></div>
+    </div>
+  </div>
+
+  <script>
+    const STATUS_TABS = ['all', 'new', 'processed', 'completed'];
+
+    const state = {
+      user: null,
+      orders: [],
+      selectedStatus: 'all',
+    };
+
+    const listEl = document.getElementById('orders-list');
+    const emptyStateEl = document.getElementById('empty-state');
+    const tabsEl = document.getElementById('status-tabs');
+    const detailOverlay = document.getElementById('detail-overlay');
+
+    function escapeHtml(value) {
+      const div = document.createElement('div');
+      div.textContent = value === null || value === undefined ? '' : String(value);
+      return div.innerHTML;
+    }
+
+    function formatDate(dateStr) {
+      return new Date(dateStr).toLocaleDateString();
+    }
+
+    function itemCount(order) {
+      return (order.OrderItems || []).reduce((sum, oi) => sum + oi.quantity, 0);
+    }
+
+    async function apiFetch(url, options = {}) {
+      const response = await fetch(url, { credentials: 'include', ...options });
+      let data = null;
+      try {
+        data = await response.json();
+      } catch (err) {
+        data = null;
+      }
+      if (!response.ok) {
+        const error = new Error((data && data.errors && data.errors[0]) || 'Request failed');
+        error.status = response.status;
+        throw error;
+      }
+      return data;
+    }
+
+    function renderTabs() {
+      tabsEl.innerHTML = STATUS_TABS.map((status) => `
+        <div class="tab ${state.selectedStatus === status ? 'active' : ''}" data-select-status="${status}">
+          ${status.charAt(0).toUpperCase() + status.slice(1)}
+        </div>
+      `).join('');
+
+      tabsEl.querySelectorAll('[data-select-status]').forEach((el) => {
+        el.addEventListener('click', () => {
+          state.selectedStatus = el.getAttribute('data-select-status');
+          renderTabs();
+          renderOrdersList();
+        });
+      });
+    }
+
+    function getFilteredOrders() {
+      if (state.selectedStatus === 'all') return state.orders;
+      return state.orders.filter((order) => order.status === state.selectedStatus);
+    }
+
+    function renderOrdersList() {
+      const orders = getFilteredOrders();
+      emptyStateEl.hidden = orders.length > 0;
+
+      listEl.innerHTML = orders.map((order) => `
+        <div class="cart-line" data-open-order="${order.id}" style="cursor:pointer;">
+          <span>#${order.id}</span>
+          <span>${escapeHtml(formatDate(order.createdAt))}</span>
+          <span>${escapeHtml(order.delivery_type)}</span>
+          <span>${itemCount(order)} item(s)</span>
+          <span>&euro;${Number(order.total).toFixed(2)}</span>
+          <span>${escapeHtml(order.status)}</span>
+        </div>
+      `).join('');
+
+      listEl.querySelectorAll('[data-open-order]').forEach((el) => {
+        el.addEventListener('click', () => openDetailModal(Number(el.getAttribute('data-open-order'))));
+      });
+    }
+
+    function openDetailModal(orderId) {
+      const order = state.orders.find((o) => o.id === orderId);
+      if (!order) return;
+
+      document.getElementById('detail-title').textContent = `Order #${order.id}`;
+      document.getElementById('detail-meta').textContent = `${formatDate(order.createdAt)} · ${order.delivery_type} · ${order.status}`;
+
+      document.getElementById('detail-items').innerHTML = (order.OrderItems || []).map((oi) => `
+        <div class="cart-line">
+          <span>${escapeHtml(oi.Product ? oi.Product.name : 'Unknown product')} (${escapeHtml(oi.Size ? oi.Size.name : '?')}) &times; ${oi.quantity}</span>
+          <span>&euro;${Number(oi.price_at_order_time).toFixed(2)} each</span>
+          <span>&euro;${(Number(oi.price_at_order_time) * oi.quantity).toFixed(2)}</span>
+        </div>
+      `).join('');
+
+      const addressEl = document.getElementById('detail-address');
+      if (order.delivery_type === 'shipping') {
+        addressEl.hidden = false;
+        addressEl.textContent = `Shipping to: ${order.street} ${order.house_number}, ${order.postal_code} ${order.city}`;
+      } else {
+        addressEl.hidden = true;
+      }
+
+      document.getElementById('detail-total').textContent = `€${Number(order.total).toFixed(2)}`;
+
+      detailOverlay.hidden = false;
+    }
+
+    function closeDetailModal() {
+      detailOverlay.hidden = true;
+    }
+
+    async function init() {
+      let user;
+      try {
+        user = await apiFetch('/api/me');
+      } catch (err) {
+        window.location.href = '/login.html?redirect=orders';
+        return;
+      }
+
+      if (user.role === 'admin') {
+        window.location.href = '/admin/dashboard.html';
+        return;
+      }
+
+      state.user = user;
+      state.orders = await apiFetch('/api/orders');
+
+      renderTabs();
+      renderOrdersList();
+
+      document.getElementById('detail-close-btn').addEventListener('click', closeDetailModal);
+      document.getElementById('page').hidden = false;
+    }
+
+    init();
+  </script>
+</body>
+</html>
