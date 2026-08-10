@@ -1,5 +1,5 @@
 const {
-  sequelize, Order, OrderItem, Product, ProductSize, Size,
+  sequelize, Order, OrderItem, Product, ProductSize, Size, User,
 } = require('../models');
 const { isBlank, isValidPostalCode } = require('../utils/validators');
 
@@ -51,6 +51,10 @@ const ORDER_INCLUDE = [
   {
     model: OrderItem,
     include: [Product, Size],
+  },
+  {
+    model: User,
+    attributes: ['id', 'first_name', 'last_name', 'email'],
   },
 ];
 
@@ -171,6 +175,33 @@ async function getOne(req, res, next) {
   }
 }
 
+async function updateStatus(req, res, next) {
+  try {
+    const { status } = req.body;
+
+    if (isBlank(status) || !ORDER_STATUSES.includes(status)) {
+      return res.status(400).json({ errors: [`status must be one of ${ORDER_STATUSES.join(', ')}`] });
+    }
+
+    const order = await Order.findByPk(req.params.id);
+    if (!order) return res.status(404).json({ errors: ['Order not found'] });
+
+    const currentIndex = ORDER_STATUSES.indexOf(order.status);
+    const nextIndex = ORDER_STATUSES.indexOf(status);
+    if (nextIndex < currentIndex) {
+      return res.status(409).json({ errors: [`order status cannot move backward from "${order.status}" to "${status}"`] });
+    }
+
+    order.status = status;
+    await order.save();
+
+    const result = await Order.findByPk(order.id, { include: ORDER_INCLUDE });
+    return res.status(200).json(result);
+  } catch (err) {
+    return next(err);
+  }
+}
+
 module.exports = {
-  create, list, getOne,
+  create, list, getOne, updateStatus,
 };

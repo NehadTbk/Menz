@@ -18,6 +18,8 @@
   <main>
     <div id="message" class="message"></div>
 
+    <div class="notif-bar" id="notif-bar" hidden></div>
+
     <section>
       <h2>Categories</h2>
       <div class="tabs" id="tabs"></div>
@@ -31,7 +33,25 @@
       <div class="product-grid" id="product-grid"></div>
       <div class="empty-state" id="empty-state" hidden>No products in this category yet.</div>
     </section>
+
+    <section id="orders-section">
+      <h2>Orders</h2>
+      <div class="tabs" id="order-status-tabs"></div>
+      <div id="orders-list"></div>
+      <div class="empty-state" id="orders-empty-state" hidden>No orders found.</div>
+    </section>
   </main>
+
+  <div class="modal-overlay" id="order-detail-overlay" hidden>
+    <div class="modal">
+      <button type="button" id="order-detail-close-btn" style="float:right;">&times;</button>
+      <h2 id="order-detail-title"></h2>
+      <p id="order-detail-meta"></p>
+      <div id="order-detail-items"></div>
+      <p id="order-detail-address" hidden></p>
+      <div class="cart-total"><span>Total</span><span id="order-detail-total"></span></div>
+    </div>
+  </div>
 
   <div class="modal-overlay" id="modal-overlay" hidden>
     <div class="modal">
@@ -90,12 +110,17 @@
   </div>
 
   <script>
+    const ORDER_STATUS_TABS = ['all', 'new', 'processed', 'completed'];
+    const NEXT_STATUS = { new: 'processed', processed: 'completed' };
+
     const state = {
       categories: [],
       sizes: [],
       products: [],
+      orders: [],
       selectedCategoryId: null,
       editingProductId: null,
+      selectedOrderStatus: 'all',
     };
 
     const messageEl = document.getElementById('message');
@@ -104,6 +129,11 @@
     const emptyStateEl = document.getElementById('empty-state');
     const modalOverlay = document.getElementById('modal-overlay');
     const modalMessageEl = document.getElementById('modal-message');
+    const notifBarEl = document.getElementById('notif-bar');
+    const orderTabsEl = document.getElementById('order-status-tabs');
+    const ordersListEl = document.getElementById('orders-list');
+    const ordersEmptyStateEl = document.getElementById('orders-empty-state');
+    const orderDetailOverlay = document.getElementById('order-detail-overlay');
 
     function escapeHtml(value) {
       const div = document.createElement('div');
@@ -171,6 +201,138 @@
 
     async function loadProducts() {
       state.products = await apiFetch('/api/products');
+    }
+
+    async function loadOrders() {
+      state.orders = await apiFetch('/api/orders');
+    }
+
+    function formatDate(dateStr) {
+      return new Date(dateStr).toLocaleDateString();
+    }
+
+    function itemCount(order) {
+      return (order.OrderItems || []).reduce((sum, oi) => sum + oi.quantity, 0);
+    }
+
+    function customerName(order) {
+      if (!order.User) return 'Unknown';
+      return `${order.User.first_name} ${order.User.last_name}`;
+    }
+
+    function renderNotifBar() {
+      const newCount = state.orders.filter((o) => o.status === 'new').length;
+      if (newCount === 0) {
+        notifBarEl.hidden = true;
+        return;
+      }
+      notifBarEl.hidden = false;
+      notifBarEl.textContent = `${newCount} new order${newCount === 1 ? '' : 's'}`;
+    }
+
+    function renderOrderTabs() {
+      orderTabsEl.innerHTML = ORDER_STATUS_TABS.map((status) => `
+        <div class="tab ${state.selectedOrderStatus === status ? 'active' : ''}" data-select-order-status="${status}">
+          ${status.charAt(0).toUpperCase() + status.slice(1)}
+        </div>
+      `).join('');
+
+      orderTabsEl.querySelectorAll('[data-select-order-status]').forEach((el) => {
+        el.addEventListener('click', () => {
+          state.selectedOrderStatus = el.getAttribute('data-select-order-status');
+          renderOrderTabs();
+          renderOrdersList();
+        });
+      });
+    }
+
+    function getFilteredOrders() {
+      if (state.selectedOrderStatus === 'all') return state.orders;
+      return state.orders.filter((order) => order.status === state.selectedOrderStatus);
+    }
+
+    function renderOrdersList() {
+      const orders = getFilteredOrders();
+      ordersEmptyStateEl.hidden = orders.length > 0;
+
+      ordersListEl.innerHTML = orders.map((order) => `
+        <div class="order-row" data-open-order="${order.id}" style="cursor:pointer;">
+          <span>#${order.id}</span>
+          <span>${escapeHtml(customerName(order))}</span>
+          <span>${escapeHtml(formatDate(order.createdAt))}</span>
+          <span>${escapeHtml(order.delivery_type)}</span>
+          <span>&euro;${Number(order.total).toFixed(2)}</span>
+          <span class="status-badge ${order.status}">${escapeHtml(order.status)}</span>
+          <span class="actions">
+            ${NEXT_STATUS[order.status] ? `<button type="button" data-advance-order="${order.id}" data-next-status="${NEXT_STATUS[order.status]}">Mark ${NEXT_STATUS[order.status]}</button>` : ''}
+          </span>
+        </div>
+      `).join('');
+
+      ordersListEl.querySelectorAll('[data-open-order]').forEach((el) => {
+        el.addEventListener('click', (e) => {
+          if (e.target.closest('[data-advance-order]')) return;
+          openOrderDetailModal(Number(el.getAttribute('data-open-order')));
+        });
+      });
+
+      ordersListEl.querySelectorAll('[data-advance-order]').forEach((btn) => {
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          updateOrderStatus(
+            Number(btn.getAttribute('data-advance-order')),
+            btn.getAttribute('data-next-status'),
+          );
+        });
+      });
+    }
+
+    async function updateOrderStatus(id, status) {
+      try {
+        clearMessage();
+        await apiFetch(`/api/orders/${id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ status }),
+        });
+        await loadOrders();
+        renderNotifBar();
+        renderOrdersList();
+      } catch (err) {
+        showMessage(err.message, 'error');
+      }
+    }
+
+    function openOrderDetailModal(orderId) {
+      const order = state.orders.find((o) => o.id === orderId);
+      if (!order) return;
+
+      document.getElementById('order-detail-title').textContent = `Order #${order.id}`;
+      document.getElementById('order-detail-meta').textContent = `${customerName(order)} · ${formatDate(order.createdAt)} · ${order.delivery_type} · ${order.status}`;
+
+      document.getElementById('order-detail-items').innerHTML = (order.OrderItems || []).map((oi) => `
+        <div class="cart-line">
+          <span>${escapeHtml(oi.Product ? oi.Product.name : 'Unknown product')} (${escapeHtml(oi.Size ? oi.Size.name : '?')}) &times; ${oi.quantity}</span>
+          <span>&euro;${Number(oi.price_at_order_time).toFixed(2)} each</span>
+          <span>&euro;${(Number(oi.price_at_order_time) * oi.quantity).toFixed(2)}</span>
+        </div>
+      `).join('');
+
+      const addressEl = document.getElementById('order-detail-address');
+      if (order.delivery_type === 'shipping') {
+        addressEl.hidden = false;
+        addressEl.textContent = `Shipping to: ${order.street} ${order.house_number}, ${order.postal_code} ${order.city}`;
+      } else {
+        addressEl.hidden = true;
+      }
+
+      document.getElementById('order-detail-total').textContent = `€${Number(order.total).toFixed(2)}`;
+
+      orderDetailOverlay.hidden = false;
+    }
+
+    function closeOrderDetailModal() {
+      orderDetailOverlay.hidden = true;
     }
 
     function renderTabs() {
@@ -550,10 +712,20 @@
       document.getElementById('add-product-btn').addEventListener('click', () => openProductModal(null));
       document.getElementById('modal-cancel-btn').addEventListener('click', closeProductModal);
       document.getElementById('product-form').addEventListener('submit', handleProductSubmit);
+      document.getElementById('order-detail-close-btn').addEventListener('click', closeOrderDetailModal);
+      notifBarEl.addEventListener('click', () => {
+        state.selectedOrderStatus = 'new';
+        renderOrderTabs();
+        renderOrdersList();
+        document.getElementById('orders-section').scrollIntoView({ behavior: 'smooth' });
+      });
 
-      await Promise.all([loadSizes(), loadCategories(), loadProducts()]);
+      await Promise.all([loadSizes(), loadCategories(), loadProducts(), loadOrders()]);
       renderTabs();
       renderProductGrid();
+      renderNotifBar();
+      renderOrderTabs();
+      renderOrdersList();
 
       document.getElementById('page').hidden = false;
     }
