@@ -7,7 +7,10 @@ module.exports = (err, req, res, next) => {
     return res.status(400).json({ errors: [err.message] });
   }
 
+  if (err.type === 'entity.parse.failed') {
+    return res.status(400).json({ errors: ['Invalid JSON in request body'] });
+  }
+
   console.error(err);
-  const status = err.status || 500;
-  res.status(status).json({ error: err.message || 'Internal server error' });
+  res.status(500).json({ errors: ['Internal server error'] });
 };
