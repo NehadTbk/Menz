@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Menz API Documentation</title>
+</head>
+<body>
+<header>
+<h1>Menz API</h1>
+<p>Data-driven REST API for a men's clothing store, built with Node.js, Express and Sequelize.</p>
+</header>
+
+<main>
+<section id="general">
+<h2>General notes</h2>
+<ul>
+<li>Base URL: all API endpoints are prefixed with <code>/api</code>.</li>
+<li>Request bodies are JSON (<code>Content-Type: application/json</code>), except product create/update which use <code>multipart/form-data</code> (to support an optional photo upload).</li>
+<li>Authentication uses a JSON Web Token stored in an <code>httpOnly</code> cookie named <code>token</code>, set automatically on register/login. There is no <code>Authorization</code> header — clients must call <code>fetch()</code> with <code>credentials: 'include'</code> so the browser sends the cookie.</li>
+<li>Endpoints marked "Auth: required" respond <code>401</code> without a valid session cookie. Endpoints marked "Role: admin" additionally respond <code>403</code> for a non-admin user.</li>
+<li>Validation and other client errors respond with status <code>400</code> (or <code>409</code> for conflicts) and a body of the form <code>{ "errors": ["message", ...] }</code>.</li>
+<li>Not-found resources respond <code>404</code> with <code>{ "errors": ["... not found"] }</code>.</li>
+</ul>
+</section>
+
+<section id="auth">
+<h2>Authentication — <code>/api</code></h2>
+
+<article>
+<h3>POST /api/register</h3>
+<p>Create a new client account and log the user in.</p>
+<p>Auth: none</p>
+<table border="1" cellpadding="4" cellspacing="0">
+<thead><tr><th>Field</th><th>Location</th><th>Notes</th></tr></thead>
+<tbody>
+<tr><td>first_name</td><td>body</td><td>required, no digits</td></tr>
+<tr><td>last_name</td><td>body</td><td>required, no digits</td></tr>
+<tr><td>email</td><td>body</td><td>required, valid email, must be unique</td></tr>
+<tr><td>phone</td><td>body</td><td>required, Belgian format (e.g. +32 470 12 34 56 or 0470 12 34 56)</td></tr>
+<tr><td>street</td><td>body</td><td>required</td></tr>
+<tr><td>house_number</td><td>body</td><td>required</td></tr>
+<tr><td>postal_code</td><td>body</td><td>required, exactly 4 digits</td></tr>
+<tr><td>city</td><td>body</td><td>required</td></tr>
+<tr><td>password</td><td>body</td><td>required, min 6 characters</td></tr>
+<tr><td>confirm_password</td><td>body</td><td>required, must match password</td></tr>
+</tbody>
+</table>
+<p>Response: <code>201</code> with <code>{ id, first_name, last_name, email, role }</code>, sets the session cookie. <code>409</code> if the email is already registered.</p>
+</article>
+
+<article>
+<h3>POST /api/login</h3>
+<p>Verify credentials and start a session. Role (client/admin) is detected server-side.</p>
+<p>Auth: none</p>
+<table border="1" cellpadding="4" cellspacing="0">
+<thead><tr><th>Field</th><th>Location</th><th>Notes</th></tr></thead>
+<tbody>
+<tr><td>email</td><td>body</td><td>required</td></tr>
+<tr><td>password</td><td>body</td><td>required</td></tr>
+<tr><td>remember_me</td><td>body</td><td>optional boolean, extends cookie lifetime when true</td></tr>
+</tbody>
+</table>
+<p>Response: <code>200</code> with <code>{ role }</code>, sets the session cookie. <code>401</code> with a generic error on invalid credentials (no indication whether the email exists).</p>
+</article>
+
+<article>
+<h3>POST /api/logout</h3>
+<p>Clear the session cookie.</p>
+<p>Auth: none</p>
+<p>Response: <code>200</code> with <code>{ message }</code>.</p>
+</article>
+
+<article>
+<h3>GET /api/me</h3>
+<p>Return the currently authenticated user's profile and role.</p>
+<p>Auth: required</p>
+<p>Response: <code>200</code> with <code>{ id, first_name, last_name, email, role, phone, street, house_number, postal_code, city }</code>.</p>
+</article>
+
+<article>
+<h3>POST /api/password/forgot</h3>
+<p>Send a password reset email if the address is registered.</p>
+<p>Auth: none</p>
+<table border="1" cellpadding="4" cellspacing="0">
+<thead><tr><th>Field</th><th>Location</th><th>Notes</th></tr></thead>
+<tbody>
+<tr><td>email</td><td>body</td><td>required, valid email</td></tr>
+</tbody>
+</table>
+<p>Response: always <code>200</code> with the same <code>{ message }</code>, regardless of whether the email exists (prevents account enumeration).</p>
+</article>
+
+<article>
+<h3>POST /api/password/reset</h3>
+<p>Reset a password using the token emailed by the forgot-password endpoint.</p>
+<p>Auth: none</p>
+<table border="1" cellpadding="4" cellspacing="0">
+<thead><tr><th>Field</th><th>Location</th><th>Notes</th></tr></thead>
+<tbody>
+<tr><td>token</td><td>body</td><td>required, from the reset email link</td></tr>
+<tr><td>password</td><td>body</td><td>required, min 6 characters</td></tr>
+<tr><td>confirm_password</td><td>body</td><td>required, must match password</td></tr>
+</tbody>
+</table>
+<p>Response: <code>200</code> with <code>{ message }</code>. <code>400</code> if the token is invalid or expired.</p>
+</article>
+</section>
+
+<section id="categories">
+<h2>Categories — <code>/api/categories</code></h2>
+
+<article>
+<h3>GET /api/categories</h3>
+<p>List all categories.</p>
+<p>Auth: none</p>
+<p>Response: <code>200</code> with an array of <code>{ id, name, code, next_product_number }</code>.</p>
+</article>
+
+<article>
+<h3>GET /api/categories/:id</h3>
+<p>Retrieve a single category.</p>
+<p>Auth: none</p>
+<p>Response: <code>200</code> with a category object, or <code>404</code>.</p>
+</article>
+
+<article>
+<h3>POST /api/categories</h3>
+<p>Create a category.</p>
+<p>Auth: required — Role: admin</p>
+<table border="1" cellpadding="4" cellspacing="0">
+<thead><tr><th>Field</th><th>Location</th><th>Notes</th></tr></thead>
+<tbody>
+<tr><td>name</td><td>body</td><td>required</td></tr>
+<tr><td>code</td><td>body</td><td>required, 2-10 alphanumeric characters, used as the product code prefix (e.g. TSH)</td></tr>
+</tbody>
+</table>
+<p>Response: <code>201</code> with the created category.</p>
+</article>
+
+<article>
+<h3>PUT /api/categories/:id</h3>
+<p>Rename/update a category. Same body as create.</p>
+<p>Auth: required — Role: admin</p>
+<p>Response: <code>200</code> with the updated category, or <code>404</code>.</p>
+</article>
+
+<article>
+<h3>DELETE /api/categories/:id</h3>
+<p>Delete a category.</p>
+<p>Auth: required — Role: admin</p>
+<p>Response: <code>204</code>. <code>409</code> if products are still linked to the category.</p>
+</article>
+</section>
+
+<section id="sizes">
+<h2>Sizes — <code>/api/sizes</code></h2>
+
+<article>
+<h3>GET /api/sizes</h3>
+<p>List the fixed set of sizes (S, M, L, XL, XXL) used across all products.</p>
+<p>Auth: none</p>
+<p>Response: <code>200</code> with an array of <code>{ id, name }</code>.</p>
+</article>
+</section>
+
+<section id="products">
+<h2>Products — <code>/api/products</code></h2>
+
+<article>
+<h3>GET /api/products</h3>
+<p>List products. Non-admin requests only ever see active products.</p>
+<p>Auth: none (optional — an admin session includes inactive products)</p>
+<table border="1" cellpadding="4" cellspacing="0">
+<thead><tr><th>Field</th><th>Location</th><th>Notes</th></tr></thead>
+<tbody>
+<tr><td>category_id</td><td>query</td><td>optional, filter by category</td></tr>
+<tr><td>code</td><td>query</td><td>optional, partial (substring) match on product code — search endpoint</td></tr>
+<tr><td>limit</td><td>query</td><td>optional, maximum number of results — pagination endpoint</td></tr>
+<tr><td>offset</td><td>query</td><td>optional, number of results to skip — pagination endpoint</td></tr>
+</tbody>
+</table>
+<p>Response: <code>200</code> with an array of products, each including its <code>Category</code> and its <code>ProductSizes</code> (with <code>Size</code> and <code>stock</code>).</p>
+</article>
+
+<article>
+<h3>GET /api/products/:id</h3>
+<p>Retrieve a single product with its sizes/stock.</p>
+<p>Auth: none (optional — an admin session can retrieve inactive products)</p>
+<p>Response: <code>200</code> with the product, or <code>404</code>.</p>
+</article>
+
+<article>
+<h3>POST /api/products</h3>
+<p>Create a product. Its <code>code</code> is auto-generated from the category's code and an incrementing per-category counter (e.g. <code>TSH-0001</code>).</p>
+<p>Auth: required — Role: admin</p>
+<p>Body: <code>multipart/form-data</code></p>
+<table border="1" cellpadding="4" cellspacing="0">
+<thead><tr><th>Field</th><th>Location</th><th>Notes</th></tr></thead>
+<tbody>
+<tr><td>category_id</td><td>body</td><td>required, must reference an existing category</td></tr>
+<tr><td>name</td><td>body</td><td>required</td></tr>
+<tr><td>description</td><td>body</td><td>optional</td></tr>
+<tr><td>price</td><td>body</td><td>required, positive number</td></tr>
+<tr><td>active</td><td>body</td><td>optional boolean, defaults to true</td></tr>
+<tr><td>photo</td><td>body</td><td>optional, image file upload</td></tr>
+<tr><td>sizes</td><td>body</td><td>optional, JSON string encoding an array of <code>{ size_id, stock }</code>; <code>stock</code> must be a non-negative integer, <code>size_id</code> must reference an existing size</td></tr>
+</tbody>
+</table>
+<p>Response: <code>201</code> with the created product, including <code>Category</code> and <code>ProductSizes</code>.</p>
+</article>
+
+<article>
+<h3>PUT /api/products/:id</h3>
+<p>Update a product. Same fields as create; omitting <code>sizes</code> leaves existing sizes/stock untouched, providing it replaces the full set.</p>
+<p>Auth: required — Role: admin</p>
+<p>Response: <code>200</code> with the updated product, or <code>404</code>.</p>
+</article>
+
+<article>
+<h3>DELETE /api/products/:id</h3>
+<p>Delete a product and its size/stock rows.</p>
+<p>Auth: required — Role: admin</p>
+<p>Response: <code>204</code>, or <code>404</code>.</p>
+</article>
+</section>
+
+<section id="orders">
+<h2>Orders — <code>/api/orders</code></h2>
+
+<article>
+<h3>GET /api/orders</h3>
+<p>List orders. A client only ever sees their own orders (scoped server-side by the authenticated user id); an admin sees every order.</p>
+<p>Auth: required</p>
+<table border="1" cellpadding="4" cellspacing="0">
+<thead><tr><th>Field</th><th>Location</th><th>Notes</th></tr></thead>
+<tbody>
+<tr><td>status</td><td>query</td><td>optional, one of <code>new</code>, <code>processed</code>, <code>completed</code></td></tr>
+</tbody>
+</table>
+<p>Response: <code>200</code> with an array of orders (newest first), each including its <code>OrderItems</code> (with <code>Product</code> and <code>Size</code>) and the ordering <code>User</code>.</p>
+</article>
+
+<article>
+<h3>GET /api/orders/:id</h3>
+<p>Retrieve a single order. Clients receive <code>404</code> for an order that isn't theirs (never <code>403</code>, to avoid confirming the order exists).</p>
+<p>Auth: required</p>
+<p>Response: <code>200</code> with the order, or <code>404</code>.</p>
+</article>
+
+<article>
+<h3>POST /api/orders</h3>
+<p>Place an order from a set of line items. Stock per product/size is checked and decremented server-side inside a transaction — never trusted from the client.</p>
+<p>Auth: required</p>
+<table border="1" cellpadding="4" cellspacing="0">
+<thead><tr><th>Field</th><th>Location</th><th>Notes</th></tr></thead>
+<tbody>
+<tr><td>delivery_type</td><td>body</td><td>required, "pickup" or "shipping"</td></tr>
+<tr><td>street</td><td>body</td><td>required if delivery_type is "shipping"</td></tr>
+<tr><td>house_number</td><td>body</td><td>required if delivery_type is "shipping"</td></tr>
+<tr><td>postal_code</td><td>body</td><td>required if delivery_type is "shipping", exactly 4 digits</td></tr>
+<tr><td>city</td><td>body</td><td>required if delivery_type is "shipping"</td></tr>
+<tr><td>items</td><td>body</td><td>required, non-empty array of <code>{ product_id, size_id, quantity }</code>; quantity must be a positive integer</td></tr>
+</tbody>
+</table>
+<p>Response: <code>201</code> with the created order (status <code>new</code>, total including shipping cost when applicable). <code>409</code> if any line item's product is inactive or has insufficient stock — the whole order is rejected, nothing is committed.</p>
+</article>
+
+<article>
+<h3>PUT /api/orders/:id</h3>
+<p>Update an order's status. Status only moves forward through <code>new</code> &rarr; <code>processed</code> &rarr; <code>completed</code>; moving backward is rejected.</p>
+<p>Auth: required — Role: admin</p>
+<table border="1" cellpadding="4" cellspacing="0">
+<thead><tr><th>Field</th><th>Location</th><th>Notes</th></tr></thead>
+<tbody>
+<tr><td>status</td><td>body</td><td>required, one of <code>new</code>, <code>processed</code>, <code>completed</code></td></tr>
+</tbody>
+</table>
+<p>Response: <code>200</code> with the updated order. <code>404</code> if the order doesn't exist, <code>409</code> on a backward transition.</p>
+</article>
+</section>
+</main>
+</body>
+</html>

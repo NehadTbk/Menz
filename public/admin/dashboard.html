@@ -1,0 +1,736 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Admin dashboard — Menz</title>
+  <link rel="stylesheet" href="/css/app.css">
+</head>
+<body id="page" hidden>
+  <header class="topbar">
+    <h1>Menz Admin</h1>
+    <div class="topbar-right">
+      <span id="welcome-text"></span>
+      <button id="logout-btn" type="button">Log out</button>
+    </div>
+  </header>
+
+  <main>
+    <div id="message" class="message"></div>
+
+    <div class="notif-bar" id="notif-bar" hidden></div>
+
+    <section>
+      <h2>Categories</h2>
+      <div class="tabs" id="tabs"></div>
+    </section>
+
+    <section>
+      <div class="grid-header">
+        <h2 style="margin:0;">Products</h2>
+        <button class="btn-primary" id="add-product-btn" type="button">+ Add product</button>
+      </div>
+      <div class="product-grid" id="product-grid"></div>
+      <div class="empty-state" id="empty-state" hidden>No products in this category yet.</div>
+    </section>
+
+    <section id="orders-section">
+      <h2>Orders</h2>
+      <div class="tabs" id="order-status-tabs"></div>
+      <div id="orders-list"></div>
+      <div class="empty-state" id="orders-empty-state" hidden>No orders found.</div>
+    </section>
+  </main>
+
+  <div class="modal-overlay" id="order-detail-overlay" hidden>
+    <div class="modal">
+      <button type="button" id="order-detail-close-btn" style="float:right;">&times;</button>
+      <h2 id="order-detail-title"></h2>
+      <p id="order-detail-meta"></p>
+      <div id="order-detail-items"></div>
+      <p id="order-detail-address" hidden></p>
+      <div class="cart-total"><span>Total</span><span id="order-detail-total"></span></div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="modal-overlay" hidden>
+    <div class="modal">
+      <h2 id="modal-title">Add product</h2>
+      <div id="modal-message" class="message error"></div>
+      <form id="product-form">
+        <div class="field">
+          <label for="pf-category">Category</label>
+          <select id="pf-category" required></select>
+        </div>
+
+        <div class="field">
+          <label>Code</label>
+          <div class="readonly-code" id="pf-code">(auto-generated on save)</div>
+        </div>
+
+        <div class="field">
+          <label for="pf-name">Name</label>
+          <input type="text" id="pf-name" required>
+        </div>
+
+        <div class="field">
+          <label for="pf-description">Description</label>
+          <textarea id="pf-description"></textarea>
+        </div>
+
+        <div class="field">
+          <label for="pf-price">Price</label>
+          <input type="number" id="pf-price" step="0.01" min="0.01" required>
+        </div>
+
+        <div class="field">
+          <label for="pf-photo">Photo</label>
+          <img id="pf-photo-preview" alt="Current photo" hidden style="max-width:80px;max-height:80px;display:block;margin-bottom:6px;">
+          <input type="file" id="pf-photo" accept="image/jpeg,image/png,image/webp,image/gif">
+        </div>
+
+        <div class="field">
+          <label style="display:flex;align-items:center;gap:8px;font-weight:400;">
+            <input type="checkbox" id="pf-active" style="width:auto;" checked>
+            Active
+          </label>
+        </div>
+
+        <div class="field">
+          <label>Sizes &amp; stock</label>
+          <div class="sizes-section" id="pf-sizes"></div>
+        </div>
+
+        <div class="modal-actions">
+          <button type="button" class="btn-secondary" id="modal-cancel-btn">Cancel</button>
+          <button type="submit" class="btn-primary" id="modal-save-btn">Save</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script>
+    const ORDER_STATUS_TABS = ['all', 'new', 'processed', 'completed'];
+    const NEXT_STATUS = { new: 'processed', processed: 'completed' };
+
+    const state = {
+      categories: [],
+      sizes: [],
+      products: [],
+      orders: [],
+      selectedCategoryId: null,
+      editingProductId: null,
+      selectedOrderStatus: 'all',
+    };
+
+    const messageEl = document.getElementById('message');
+    const tabsEl = document.getElementById('tabs');
+    const gridEl = document.getElementById('product-grid');
+    const emptyStateEl = document.getElementById('empty-state');
+    const modalOverlay = document.getElementById('modal-overlay');
+    const modalMessageEl = document.getElementById('modal-message');
+    const notifBarEl = document.getElementById('notif-bar');
+    const orderTabsEl = document.getElementById('order-status-tabs');
+    const ordersListEl = document.getElementById('orders-list');
+    const ordersEmptyStateEl = document.getElementById('orders-empty-state');
+    const orderDetailOverlay = document.getElementById('order-detail-overlay');
+
+    function escapeHtml(value) {
+      const div = document.createElement('div');
+      div.textContent = value === null || value === undefined ? '' : String(value);
+      return div.innerHTML;
+    }
+
+    function showMessage(text, type) {
+      messageEl.textContent = text;
+      messageEl.className = `message visible ${type || 'error'}`;
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+
+    function clearMessage() {
+      messageEl.classList.remove('visible');
+    }
+
+    function showModalMessage(text) {
+      modalMessageEl.textContent = text;
+      modalMessageEl.classList.add('visible');
+    }
+
+    function clearModalMessage() {
+      modalMessageEl.classList.remove('visible');
+    }
+
+    async function apiFetch(url, options = {}) {
+      const response = await fetch(url, { credentials: 'include', ...options });
+      let data = null;
+      try {
+        data = await response.json();
+      } catch (err) {
+        data = null;
+      }
+      if (!response.ok) {
+        const error = new Error((data && data.errors && data.errors[0]) || 'Request failed');
+        error.errors = data && data.errors;
+        error.status = response.status;
+        throw error;
+      }
+      return data;
+    }
+
+    async function checkAuth() {
+      try {
+        const user = await apiFetch('/api/me');
+        if (user.role !== 'admin') {
+          window.location.href = '/login.html';
+          return null;
+        }
+        return user;
+      } catch (err) {
+        window.location.href = '/login.html';
+        return null;
+      }
+    }
+
+    async function loadSizes() {
+      state.sizes = await apiFetch('/api/sizes');
+    }
+
+    async function loadCategories() {
+      state.categories = await apiFetch('/api/categories');
+    }
+
+    async function loadProducts() {
+      state.products = await apiFetch('/api/products');
+    }
+
+    async function loadOrders() {
+      state.orders = await apiFetch('/api/orders');
+    }
+
+    function formatDate(dateStr) {
+      return new Date(dateStr).toLocaleDateString();
+    }
+
+    function itemCount(order) {
+      return (order.OrderItems || []).reduce((sum, oi) => sum + oi.quantity, 0);
+    }
+
+    function customerName(order) {
+      if (!order.User) return 'Unknown';
+      return `${order.User.first_name} ${order.User.last_name}`;
+    }
+
+    function renderNotifBar() {
+      const newCount = state.orders.filter((o) => o.status === 'new').length;
+      if (newCount === 0) {
+        notifBarEl.hidden = true;
+        return;
+      }
+      notifBarEl.hidden = false;
+      notifBarEl.textContent = `${newCount} new order${newCount === 1 ? '' : 's'}`;
+    }
+
+    function renderOrderTabs() {
+      orderTabsEl.innerHTML = ORDER_STATUS_TABS.map((status) => `
+        <div class="tab ${state.selectedOrderStatus === status ? 'active' : ''}" data-select-order-status="${status}">
+          ${status.charAt(0).toUpperCase() + status.slice(1)}
+        </div>
+      `).join('');
+
+      orderTabsEl.querySelectorAll('[data-select-order-status]').forEach((el) => {
+        el.addEventListener('click', () => {
+          state.selectedOrderStatus = el.getAttribute('data-select-order-status');
+          renderOrderTabs();
+          renderOrdersList();
+        });
+      });
+    }
+
+    function getFilteredOrders() {
+      if (state.selectedOrderStatus === 'all') return state.orders;
+      return state.orders.filter((order) => order.status === state.selectedOrderStatus);
+    }
+
+    function renderOrdersList() {
+      const orders = getFilteredOrders();
+      ordersEmptyStateEl.hidden = orders.length > 0;
+
+      ordersListEl.innerHTML = orders.map((order) => `
+        <div class="order-row" data-open-order="${order.id}" style="cursor:pointer;">
+          <span>#${order.id}</span>
+          <span>${escapeHtml(customerName(order))}</span>
+          <span>${escapeHtml(formatDate(order.createdAt))}</span>
+          <span>${escapeHtml(order.delivery_type)}</span>
+          <span>&euro;${Number(order.total).toFixed(2)}</span>
+          <span class="status-badge ${order.status}">${escapeHtml(order.status)}</span>
+          <span class="actions">
+            ${NEXT_STATUS[order.status] ? `<button type="button" data-advance-order="${order.id}" data-next-status="${NEXT_STATUS[order.status]}">Mark ${NEXT_STATUS[order.status]}</button>` : ''}
+          </span>
+        </div>
+      `).join('');
+
+      ordersListEl.querySelectorAll('[data-open-order]').forEach((el) => {
+        el.addEventListener('click', (e) => {
+          if (e.target.closest('[data-advance-order]')) return;
+          openOrderDetailModal(Number(el.getAttribute('data-open-order')));
+        });
+      });
+
+      ordersListEl.querySelectorAll('[data-advance-order]').forEach((btn) => {
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          updateOrderStatus(
+            Number(btn.getAttribute('data-advance-order')),
+            btn.getAttribute('data-next-status'),
+          );
+        });
+      });
+    }
+
+    async function updateOrderStatus(id, status) {
+      try {
+        clearMessage();
+        await apiFetch(`/api/orders/${id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ status }),
+        });
+        await loadOrders();
+        renderNotifBar();
+        renderOrdersList();
+      } catch (err) {
+        showMessage(err.message, 'error');
+      }
+    }
+
+    function openOrderDetailModal(orderId) {
+      const order = state.orders.find((o) => o.id === orderId);
+      if (!order) return;
+
+      document.getElementById('order-detail-title').textContent = `Order #${order.id}`;
+      document.getElementById('order-detail-meta').textContent = `${customerName(order)} · ${formatDate(order.createdAt)} · ${order.delivery_type} · ${order.status}`;
+
+      document.getElementById('order-detail-items').innerHTML = (order.OrderItems || []).map((oi) => `
+        <div class="cart-line">
+          <span>${escapeHtml(oi.Product ? oi.Product.name : 'Unknown product')} (${escapeHtml(oi.Size ? oi.Size.name : '?')}) &times; ${oi.quantity}</span>
+          <span>&euro;${Number(oi.price_at_order_time).toFixed(2)} each</span>
+          <span>&euro;${(Number(oi.price_at_order_time) * oi.quantity).toFixed(2)}</span>
+        </div>
+      `).join('');
+
+      const addressEl = document.getElementById('order-detail-address');
+      if (order.delivery_type === 'shipping') {
+        addressEl.hidden = false;
+        addressEl.textContent = `Shipping to: ${order.street} ${order.house_number}, ${order.postal_code} ${order.city}`;
+      } else {
+        addressEl.hidden = true;
+      }
+
+      document.getElementById('order-detail-total').textContent = `€${Number(order.total).toFixed(2)}`;
+
+      orderDetailOverlay.hidden = false;
+    }
+
+    function closeOrderDetailModal() {
+      orderDetailOverlay.hidden = true;
+    }
+
+    function renderTabs() {
+      const parts = [];
+
+      parts.push(`<div class="tab ${state.selectedCategoryId === null ? 'active' : ''}" data-select-category="">All</div>`);
+
+      state.categories.forEach((category) => {
+        const active = state.selectedCategoryId === category.id;
+        parts.push(`
+          <div class="tab ${active ? 'active' : ''}" data-select-category="${category.id}">
+            <span>${escapeHtml(category.name)}</span>
+            <button type="button" class="icon-btn" data-rename-category="${category.id}" title="Rename">&#9998;</button>
+            <button type="button" class="icon-btn" data-delete-category="${category.id}" title="Delete">&times;</button>
+          </div>
+        `);
+      });
+
+      parts.push(`
+        <div class="tab-form">
+          <input type="text" id="new-category-name" placeholder="Name" maxlength="50">
+          <input type="text" id="new-category-code" class="code" placeholder="Code" maxlength="10">
+          <button type="button" id="add-category-btn">Add</button>
+        </div>
+      `);
+
+      tabsEl.innerHTML = parts.join('');
+      attachTabListeners();
+    }
+
+    function attachTabListeners() {
+      tabsEl.querySelectorAll('[data-select-category]').forEach((el) => {
+        el.addEventListener('click', (e) => {
+          if (e.target.closest('[data-rename-category], [data-delete-category]')) return;
+          const value = el.getAttribute('data-select-category');
+          state.selectedCategoryId = value === '' ? null : Number(value);
+          renderTabs();
+          renderProductGrid();
+        });
+      });
+
+      tabsEl.querySelectorAll('[data-rename-category]').forEach((btn) => {
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          startRenameCategory(Number(btn.getAttribute('data-rename-category')));
+        });
+      });
+
+      tabsEl.querySelectorAll('[data-delete-category]').forEach((btn) => {
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          confirmDeleteCategory(Number(btn.getAttribute('data-delete-category')), btn.closest('.tab'));
+        });
+      });
+
+      const addBtn = document.getElementById('add-category-btn');
+      if (addBtn) addBtn.addEventListener('click', addCategory);
+    }
+
+    function startRenameCategory(id) {
+      const category = state.categories.find((c) => c.id === id);
+      if (!category) return;
+      const tabEl = tabsEl.querySelector(`[data-select-category="${id}"]`);
+      tabEl.outerHTML = `
+        <div class="tab-form" data-rename-form="${id}">
+          <input type="text" id="rename-name-${id}" value="${escapeHtml(category.name)}" maxlength="50">
+          <button type="button" data-save-rename="${id}">Save</button>
+          <button type="button" class="cancel" data-cancel-rename>Cancel</button>
+        </div>
+      `;
+
+      document.querySelector(`[data-save-rename="${id}"]`).addEventListener('click', () => saveRenameCategory(id, category.code));
+      document.querySelector('[data-cancel-rename]').addEventListener('click', () => { renderTabs(); });
+    }
+
+    async function saveRenameCategory(id, code) {
+      const input = document.getElementById(`rename-name-${id}`);
+      const name = input.value.trim();
+      if (!name) return;
+
+      try {
+        clearMessage();
+        await apiFetch(`/api/categories/${id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name, code }),
+        });
+        await loadCategories();
+        renderTabs();
+      } catch (err) {
+        showMessage(err.message, 'error');
+        renderTabs();
+      }
+    }
+
+    function confirmDeleteCategory(id, tabEl) {
+      tabEl.innerHTML = `
+        <span class="inline-confirm">
+          Delete?
+          <button type="button" class="confirm-yes" data-confirm-delete-category="${id}">Yes</button>
+          <button type="button" class="confirm-no" data-cancel-delete-category>No</button>
+        </span>
+      `;
+      tabEl.querySelector('[data-confirm-delete-category]').addEventListener('click', () => deleteCategory(id));
+      tabEl.querySelector('[data-cancel-delete-category]').addEventListener('click', () => renderTabs());
+    }
+
+    async function deleteCategory(id) {
+      try {
+        clearMessage();
+        await apiFetch(`/api/categories/${id}`, { method: 'DELETE' });
+        if (state.selectedCategoryId === id) state.selectedCategoryId = null;
+        await loadCategories();
+        renderTabs();
+      } catch (err) {
+        showMessage(err.message, 'error');
+        renderTabs();
+      }
+    }
+
+    async function addCategory() {
+      const nameInput = document.getElementById('new-category-name');
+      const codeInput = document.getElementById('new-category-code');
+      const name = nameInput.value.trim();
+      const code = codeInput.value.trim();
+
+      if (!name || !code) {
+        showMessage('Both a name and a code are required to add a category.', 'error');
+        return;
+      }
+
+      try {
+        clearMessage();
+        await apiFetch('/api/categories', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name, code }),
+        });
+        await loadCategories();
+        renderTabs();
+      } catch (err) {
+        showMessage(err.message, 'error');
+      }
+    }
+
+    function formatSizes(productSizes) {
+      if (!productSizes || productSizes.length === 0) return 'No sizes set';
+      return productSizes
+        .slice()
+        .sort((a, b) => a.Size.id - b.Size.id)
+        .map((ps) => `${ps.Size.name}: ${ps.stock}`)
+        .join(' · ');
+    }
+
+    function renderProductGrid() {
+      const products = state.selectedCategoryId === null
+        ? state.products
+        : state.products.filter((p) => p.category_id === state.selectedCategoryId);
+
+      emptyStateEl.hidden = products.length > 0;
+      gridEl.innerHTML = products.map((product) => `
+        <div class="product-card ${product.active ? '' : 'inactive'}" data-product-card="${product.id}">
+          <div class="photo">
+            ${product.photo ? `<img src="${escapeHtml(product.photo)}" alt="${escapeHtml(product.name)}">` : 'No photo'}
+          </div>
+          <div class="body">
+            <div class="code">${escapeHtml(product.code)} &middot; ${escapeHtml(product.Category ? product.Category.name : '')}</div>
+            <div class="name">${escapeHtml(product.name)}</div>
+            <div class="price">&euro;${Number(product.price).toFixed(2)}</div>
+            <div class="sizes">${escapeHtml(formatSizes(product.ProductSizes))}</div>
+          </div>
+          <div class="actions">
+            <div class="left">
+              <button type="button" class="icon-btn-lg" data-edit-product="${product.id}" title="Edit">&#9998;</button>
+              <button type="button" class="icon-btn-lg" data-delete-product="${product.id}" title="Delete">&#128465;</button>
+            </div>
+            <label class="active-label">
+              <input type="checkbox" data-toggle-active="${product.id}" ${product.active ? 'checked' : ''}>
+              Active
+            </label>
+          </div>
+        </div>
+      `).join('');
+
+      gridEl.querySelectorAll('[data-edit-product]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          const product = state.products.find((p) => p.id === Number(btn.getAttribute('data-edit-product')));
+          openProductModal(product);
+        });
+      });
+
+      gridEl.querySelectorAll('[data-delete-product]').forEach((btn) => {
+        btn.addEventListener('click', () => confirmDeleteProduct(Number(btn.getAttribute('data-delete-product')), btn.closest('.product-card')));
+      });
+
+      gridEl.querySelectorAll('[data-toggle-active]').forEach((toggle) => {
+        toggle.addEventListener('change', () => toggleActive(Number(toggle.getAttribute('data-toggle-active')), toggle));
+      });
+    }
+
+    function confirmDeleteProduct(id, cardEl) {
+      const actionsEl = cardEl.querySelector('.actions');
+      const original = actionsEl.innerHTML;
+      actionsEl.innerHTML = `
+        <span class="inline-confirm">
+          Delete this product?
+          <button type="button" class="confirm-yes" data-confirm-delete-product>Yes</button>
+          <button type="button" class="confirm-no" data-cancel-delete-product>No</button>
+        </span>
+      `;
+      actionsEl.querySelector('[data-confirm-delete-product]').addEventListener('click', () => deleteProduct(id));
+      actionsEl.querySelector('[data-cancel-delete-product]').addEventListener('click', () => { actionsEl.innerHTML = original; renderProductGrid(); });
+    }
+
+    async function deleteProduct(id) {
+      try {
+        clearMessage();
+        await apiFetch(`/api/products/${id}`, { method: 'DELETE' });
+        await loadProducts();
+        renderProductGrid();
+      } catch (err) {
+        showMessage(err.message, 'error');
+        renderProductGrid();
+      }
+    }
+
+    async function toggleActive(id, toggleEl) {
+      const product = state.products.find((p) => p.id === id);
+      if (!product) return;
+
+      try {
+        clearMessage();
+        await apiFetch(`/api/products/${id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            category_id: product.category_id,
+            name: product.name,
+            description: product.description,
+            price: product.price,
+            photo: product.photo,
+            active: toggleEl.checked,
+          }),
+        });
+        await loadProducts();
+        renderProductGrid();
+      } catch (err) {
+        showMessage(err.message, 'error');
+        toggleEl.checked = !toggleEl.checked;
+      }
+    }
+
+    function buildSizeCheckboxes(existingProductSizes) {
+      const stockBySize = new Map(
+        (existingProductSizes || []).map((ps) => [ps.size_id ?? ps.Size.id, ps.stock]),
+      );
+
+      const container = document.getElementById('pf-sizes');
+      container.innerHTML = state.sizes.map((size) => {
+        const hasStock = stockBySize.has(size.id);
+        const stock = hasStock ? stockBySize.get(size.id) : '';
+        return `
+          <div class="size-row">
+            <label>
+              <input type="checkbox" data-size-checkbox="${size.id}" ${hasStock ? 'checked' : ''}>
+              ${escapeHtml(size.name)}
+            </label>
+            <input type="number" min="0" step="1" data-size-stock="${size.id}" value="${stock}" ${hasStock ? '' : 'disabled'} placeholder="stock">
+          </div>
+        `;
+      }).join('');
+
+      container.querySelectorAll('[data-size-checkbox]').forEach((checkbox) => {
+        checkbox.addEventListener('change', () => {
+          const stockInput = container.querySelector(`[data-size-stock="${checkbox.getAttribute('data-size-checkbox')}"]`);
+          stockInput.disabled = !checkbox.checked;
+          if (checkbox.checked && stockInput.value === '') stockInput.value = 0;
+        });
+      });
+    }
+
+    function collectSelectedSizes() {
+      const container = document.getElementById('pf-sizes');
+      const sizes = [];
+      container.querySelectorAll('[data-size-checkbox]').forEach((checkbox) => {
+        if (!checkbox.checked) return;
+        const sizeId = Number(checkbox.getAttribute('data-size-checkbox'));
+        const stockInput = container.querySelector(`[data-size-stock="${sizeId}"]`);
+        sizes.push({ size_id: sizeId, stock: Number(stockInput.value) });
+      });
+      return sizes;
+    }
+
+    function populateCategorySelect() {
+      const select = document.getElementById('pf-category');
+      select.innerHTML = state.categories.map((c) => `<option value="${c.id}">${escapeHtml(c.name)}</option>`).join('');
+    }
+
+    function openProductModal(product) {
+      clearModalMessage();
+      populateCategorySelect();
+
+      state.editingProductId = product ? product.id : null;
+      document.getElementById('modal-title').textContent = product ? 'Edit product' : 'Add product';
+      document.getElementById('pf-code').textContent = product ? product.code : '(auto-generated on save)';
+      document.getElementById('pf-name').value = product ? product.name : '';
+      document.getElementById('pf-description').value = product ? (product.description || '') : '';
+      document.getElementById('pf-price').value = product ? product.price : '';
+      document.getElementById('pf-photo').value = '';
+      const preview = document.getElementById('pf-photo-preview');
+      if (product && product.photo) {
+        preview.src = product.photo;
+        preview.hidden = false;
+      } else {
+        preview.hidden = true;
+      }
+      document.getElementById('pf-active').checked = product ? product.active : true;
+      document.getElementById('pf-category').value = product ? product.category_id : (state.categories[0] && state.categories[0].id);
+
+      buildSizeCheckboxes(product ? product.ProductSizes : []);
+
+      modalOverlay.hidden = false;
+    }
+
+    function closeProductModal() {
+      modalOverlay.hidden = true;
+      state.editingProductId = null;
+    }
+
+    async function handleProductSubmit(e) {
+      e.preventDefault();
+      clearModalMessage();
+
+      const formData = new FormData();
+      formData.append('category_id', document.getElementById('pf-category').value);
+      formData.append('name', document.getElementById('pf-name').value.trim());
+      formData.append('description', document.getElementById('pf-description').value.trim());
+      formData.append('price', document.getElementById('pf-price').value);
+      formData.append('active', document.getElementById('pf-active').checked);
+      formData.append('sizes', JSON.stringify(collectSelectedSizes()));
+
+      const photoFile = document.getElementById('pf-photo').files[0];
+      if (photoFile) formData.append('photo', photoFile);
+
+      try {
+        if (state.editingProductId) {
+          await apiFetch(`/api/products/${state.editingProductId}`, {
+            method: 'PUT',
+            body: formData,
+          });
+        } else {
+          await apiFetch('/api/products', {
+            method: 'POST',
+            body: formData,
+          });
+        }
+
+        closeProductModal();
+        await loadProducts();
+        renderProductGrid();
+      } catch (err) {
+        showModalMessage((err.errors && err.errors.join(', ')) || err.message);
+      }
+    }
+
+    async function logout() {
+      await apiFetch('/api/logout', { method: 'POST' });
+      window.location.href = '/login.html';
+    }
+
+    async function init() {
+      const user = await checkAuth();
+      if (!user) return;
+
+      document.getElementById('welcome-text').textContent = `Welcome, ${user.first_name}`;
+      document.getElementById('logout-btn').addEventListener('click', logout);
+      document.getElementById('add-product-btn').addEventListener('click', () => openProductModal(null));
+      document.getElementById('modal-cancel-btn').addEventListener('click', closeProductModal);
+      document.getElementById('product-form').addEventListener('submit', handleProductSubmit);
+      document.getElementById('order-detail-close-btn').addEventListener('click', closeOrderDetailModal);
+      notifBarEl.addEventListener('click', () => {
+        state.selectedOrderStatus = 'new';
+        renderOrderTabs();
+        renderOrdersList();
+        document.getElementById('orders-section').scrollIntoView({ behavior: 'smooth' });
+      });
+
+      await Promise.all([loadSizes(), loadCategories(), loadProducts(), loadOrders()]);
+      renderTabs();
+      renderProductGrid();
+      renderNotifBar();
+      renderOrderTabs();
+      renderOrdersList();
+
+      document.getElementById('page').hidden = false;
+    }
+
+    init();
+  </script>
+</body>
+</html>

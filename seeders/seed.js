@@ -1,5 +1,4 @@
 require('dotenv').config();
-const bcrypt = require('bcrypt');
 const { sequelize, Size, User } = require('../models');
 
 const SIZE_NAMES = ['S', 'M', 'L', 'XL', 'XXL'];
@@ -16,12 +15,11 @@ async function seed() {
 
   const existingAdmin = await User.findOne({ where: { email: adminEmail } });
   if (!existingAdmin) {
-    const hashedPassword = await bcrypt.hash(adminPassword, 10);
     await User.create({
       first_name: 'Store',
       last_name: 'Admin',
       email: adminEmail,
-      password: hashedPassword,
+      password: adminPassword,
       phone: '+32 400 00 00 00',
       street: 'Main Street',
       house_number: '1',

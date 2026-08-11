@@ -2,3 +2,5 @@ node_modules/
 Docs/
 .claude/
 .env
+public/uploads/*
+!public/uploads/.gitkeep

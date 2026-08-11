@@ -1,3 +1,7 @@
+const bcrypt = require('bcrypt');
+
+const SALT_ROUNDS = 10;
+
 module.exports = (sequelize, DataTypes) => {
   const User = sequelize.define('User', {
     first_name: {
@@ -89,7 +93,21 @@ module.exports = (sequelize, DataTypes) => {
   }, {
     tableName: 'users',
     underscored: true,
+    hooks: {
+      beforeCreate: async (user) => {
+        user.password = await bcrypt.hash(user.password, SALT_ROUNDS);
+      },
+      beforeUpdate: async (user) => {
+        if (user.changed('password')) {
+          user.password = await bcrypt.hash(user.password, SALT_ROUNDS);
+        }
+      },
+    },
   });
+
+  User.prototype.comparePassword = function comparePassword(candidatePassword) {
+    return bcrypt.compare(candidatePassword, this.password);
+  };
 
   return User;
 };

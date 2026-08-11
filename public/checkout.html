@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Checkout — Menz</title>
+  <link rel="stylesheet" href="/css/app.css">
+</head>
+<body id="page" hidden>
+  <header class="topbar">
+    <h1><a href="/home.html" style="text-decoration:none;color:inherit;">Menz</a></h1>
+    <div class="topbar-right"><a href="/home.html">Back to shop</a></div>
+  </header>
+
+  <main>
+    <div id="message" class="message error"></div>
+
+    <section id="empty-cart-section" hidden>
+      <p>Your cart is empty. <a href="/home.html">Continue shopping</a></p>
+    </section>
+
+    <div id="checkout-content">
+      <section>
+        <h2>Your order</h2>
+        <div id="cart-lines"></div>
+      </section>
+
+      <section>
+        <h2>Delivery</h2>
+        <div style="display:flex;gap:16px;margin-bottom:12px;">
+          <label><input type="radio" name="delivery_type" value="pickup" checked> Pickup</label>
+          <label><input type="radio" name="delivery_type" value="shipping"> Shipping</label>
+        </div>
+
+        <div id="pickup-info">
+          <p>Pick up your order at our store: <strong id="store-address"></strong></p>
+        </div>
+
+        <div id="shipping-fields" hidden>
+          <div class="field-row">
+            <div class="field">
+              <label for="co-street">Street</label>
+              <input type="text" id="co-street">
+            </div>
+            <div class="field">
+              <label for="co-house-number">Number</label>
+              <input type="text" id="co-house-number">
+            </div>
+          </div>
+          <div class="field-row">
+            <div class="field">
+              <label for="co-postal-code">Postal code</label>
+              <input type="text" id="co-postal-code">
+            </div>
+            <div class="field">
+              <label for="co-city">City</label>
+              <input type="text" id="co-city">
+            </div>
+          </div>
+          <p>Store address for reference: <strong id="store-address-2"></strong></p>
+        </div>
+      </section>
+
+      <section>
+        <h2>Total</h2>
+        <div class="cart-total"><span>Subtotal</span><span id="subtotal-amount">&euro;0.00</span></div>
+        <div class="cart-total" id="shipping-row" hidden><span>Shipping</span><span id="shipping-amount">&euro;0.00</span></div>
+        <div class="cart-total"><span>Total</span><span id="total-amount">&euro;0.00</span></div>
+      </section>
+
+      <button type="button" id="place-order-btn">Place order</button>
+    </div>
+  </main>
+
+  <div class="modal-overlay" id="confirmation-overlay" hidden>
+    <div class="modal">
+      <h2>Order placed!</h2>
+      <p id="confirmation-summary"></p>
+      <div class="modal-actions">
+        <button type="button" id="view-orders-btn">View my orders</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const CART_STORAGE_KEY = 'menz_cart';
+    const SHIPPING_COST = 4.95; // must match SHIPPING_COST in .env; only used for the pre-submit estimate
+    const STORE_ADDRESS = 'Nijverheidskaai 170, 1070 Brussels';
+
+    const state = {
+      user: null,
+      cart: [],
+      products: [],
+      sizes: [],
+    };
+
+    const messageEl = document.getElementById('message');
+
+    function escapeHtml(value) {
+      const div = document.createElement('div');
+      div.textContent = value === null || value === undefined ? '' : String(value);
+      return div.innerHTML;
+    }
+
+    function showMessage(text) {
+      messageEl.textContent = text;
+      messageEl.classList.add('visible');
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+
+    function clearMessage() {
+      messageEl.classList.remove('visible');
+    }
+
+    async function apiFetch(url, options = {}) {
+      const response = await fetch(url, { credentials: 'include', ...options });
+      let data = null;
+      try {
+        data = await response.json();
+      } catch (err) {
+        data = null;
+      }
+      if (!response.ok) {
+        const error = new Error((data && data.errors && data.errors[0]) || 'Request failed');
+        error.status = response.status;
+        throw error;
+      }
+      return data;
+    }
+
+    function loadCart() {
+      try {
+        const raw = localStorage.getItem(CART_STORAGE_KEY);
+        return raw ? JSON.parse(raw) : [];
+      } catch (err) {
+        return [];
+      }
+    }
+
+    function saveCart() {
+      localStorage.setItem(CART_STORAGE_KEY, JSON.stringify(state.cart));
+    }
+
+    function findProductById(id) {
+      return state.products.find((p) => p.id === id);
+    }
+
+    function findSizeById(id) {
+      return state.sizes.find((s) => s.id === id);
+    }
+
+    function stockForLine(line) {
+      const product = findProductById(line.product_id);
+      if (!product) return 0;
+      const entry = (product.ProductSizes || []).find((ps) => ps.size_id === line.size_id);
+      return entry ? entry.stock : 0;
+    }
+
+    function cartLineSubtotal(line) {
+      const product = findProductById(line.product_id);
+      return product ? Number(product.price) * line.quantity : 0;
+    }
+
+    function subtotal() {
+      return state.cart.reduce((sum, line) => sum + cartLineSubtotal(line), 0);
+    }
+
+    function currentDeliveryType() {
+      return document.querySelector('input[name="delivery_type"]:checked').value;
+    }
+
+    function adjustQuantity(index, delta) {
+      const line = state.cart[index];
+      if (!line) return;
+      const newQty = line.quantity + delta;
+      if (newQty <= 0) {
+        removeLine(index);
+        return;
+      }
+      line.quantity = Math.min(newQty, stockForLine(line) || newQty);
+      saveCart();
+      renderCartLines();
+    }
+
+    function removeLine(index) {
+      state.cart.splice(index, 1);
+      saveCart();
+      renderCartLines();
+    }
+
+    function renderCartLines() {
+      const emptySection = document.getElementById('empty-cart-section');
+      const content = document.getElementById('checkout-content');
+
+      if (state.cart.length === 0) {
+        emptySection.hidden = false;
+        content.hidden = true;
+        return;
+      }
+      emptySection.hidden = true;
+      content.hidden = false;
+
+      const container = document.getElementById('cart-lines');
+      container.innerHTML = state.cart.map((line, index) => {
+        const product = findProductById(line.product_id);
+        if (!product) {
+          return `
+            <div class="cart-line">
+              <span>Product no longer available</span>
+              <button type="button" data-remove-line="${index}">Remove</button>
+            </div>
+          `;
+        }
+        const size = findSizeById(line.size_id);
+        const availableStock = stockForLine(line);
+        return `
+          <div class="cart-line">
+            <span>${escapeHtml(product.name)} (${escapeHtml(size ? size.name : '?')})</span>
+            <span>
+              <button type="button" data-qty-decrease="${index}">-</button>
+              ${line.quantity}
+              <button type="button" data-qty-increase="${index}" ${line.quantity >= availableStock ? 'disabled' : ''}>+</button>
+            </span>
+            <span>&euro;${Number(product.price).toFixed(2)} each</span>
+            <span>&euro;${cartLineSubtotal(line).toFixed(2)}</span>
+            <button type="button" data-remove-line="${index}">&times;</button>
+          </div>
+        `;
+      }).join('');
+
+      container.querySelectorAll('[data-qty-decrease]').forEach((btn) => {
+        btn.addEventListener('click', () => adjustQuantity(Number(btn.getAttribute('data-qty-decrease')), -1));
+      });
+      container.querySelectorAll('[data-qty-increase]').forEach((btn) => {
+        btn.addEventListener('click', () => adjustQuantity(Number(btn.getAttribute('data-qty-increase')), 1));
+      });
+      container.querySelectorAll('[data-remove-line]').forEach((btn) => {
+        btn.addEventListener('click', () => removeLine(Number(btn.getAttribute('data-remove-line'))));
+      });
+
+      renderTotals();
+    }
+
+    function renderTotals() {
+      const sub = subtotal();
+      const isShipping = currentDeliveryType() === 'shipping';
+      const shipping = isShipping ? SHIPPING_COST : 0;
+
+      document.getElementById('subtotal-amount').textContent = `€${sub.toFixed(2)}`;
+      document.getElementById('shipping-row').hidden = !isShipping;
+      document.getElementById('shipping-amount').textContent = `€${shipping.toFixed(2)}`;
+      document.getElementById('total-amount').textContent = `€${(sub + shipping).toFixed(2)}`;
+
+      document.getElementById('pickup-info').hidden = isShipping;
+      document.getElementById('shipping-fields').hidden = !isShipping;
+    }
+
+    async function handlePlaceOrder() {
+      clearMessage();
+      const deliveryType = currentDeliveryType();
+
+      const payload = {
+        delivery_type: deliveryType,
+        items: state.cart.map((line) => ({
+          product_id: line.product_id,
+          size_id: line.size_id,
+          quantity: line.quantity,
+        })),
+      };
+
+      if (deliveryType === 'shipping') {
+        const street = document.getElementById('co-street').value.trim();
+        const houseNumber = document.getElementById('co-house-number').value.trim();
+        const postalCode = document.getElementById('co-postal-code').value.trim();
+        const city = document.getElementById('co-city').value.trim();
+
+        if (!street || !houseNumber || !postalCode || !city) {
+          showMessage('Please fill in your full shipping address.');
+          return;
+        }
+
+        Object.assign(payload, {
+          street, house_number: houseNumber, postal_code: postalCode, city,
+        });
+      }
+
+      const btn = document.getElementById('place-order-btn');
+      btn.disabled = true;
+      try {
+        const order = await apiFetch('/api/orders', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+
+        localStorage.removeItem(CART_STORAGE_KEY);
+        state.cart = [];
+        showConfirmation(order);
+      } catch (err) {
+        showMessage(err.message);
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    function showConfirmation(order) {
+      document.getElementById('confirmation-summary').textContent = `Order #${order.id} — total €${Number(order.total).toFixed(2)}`;
+      document.getElementById('confirmation-overlay').hidden = false;
+    }
+
+    async function init() {
+      try {
+        state.user = await apiFetch('/api/me');
+      } catch (err) {
+        window.location.href = '/login.html?redirect=checkout';
+        return;
+      }
+
+      state.cart = loadCart();
+      const [sizes, products] = await Promise.all([apiFetch('/api/sizes'), apiFetch('/api/products')]);
+      state.sizes = sizes;
+      state.products = products;
+
+      document.getElementById('store-address').textContent = STORE_ADDRESS;
+      document.getElementById('store-address-2').textContent = STORE_ADDRESS;
+
+      if (state.user.street) {
+        document.getElementById('co-street').value = state.user.street;
+        document.getElementById('co-house-number').value = state.user.house_number;
+        document.getElementById('co-postal-code').value = state.user.postal_code;
+        document.getElementById('co-city').value = state.user.city;
+      }
+
+      document.querySelectorAll('input[name="delivery_type"]').forEach((radio) => {
+        radio.addEventListener('change', renderTotals);
+      });
+      document.getElementById('place-order-btn').addEventListener('click', handlePlaceOrder);
+      document.getElementById('view-orders-btn').addEventListener('click', () => {
+        window.location.href = '/orders.html';
+      });
+
+      renderCartLines();
+      document.getElementById('page').hidden = false;
+    }
+
+    init();
+  </script>
+</body>
+</html>
