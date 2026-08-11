@@ -17,6 +17,21 @@ function isNonNegativeInt(value) {
   return Number.isInteger(n) && n >= 0;
 }
 
+const SORT_FIELDS = {
+  price: 'price',
+  name: 'name',
+  code: 'code',
+  created_at: 'createdAt',
+};
+
+function parseSort(sort) {
+  const desc = sort.startsWith('-');
+  const key = desc ? sort.slice(1) : sort;
+  const column = SORT_FIELDS[key];
+  if (!column) return null;
+  return [[column, desc ? 'DESC' : 'ASC']];
+}
+
 function parseMultipartBody(body) {
   let { sizes } = body;
   if (typeof sizes === 'string') {
@@ -101,7 +116,7 @@ function isAdminRequest(req) {
 async function list(req, res, next) {
   try {
     const {
-      category_id, code, limit, offset,
+      category_id, code, limit, offset, sort,
     } = req.query;
     const where = {};
 
@@ -109,10 +124,20 @@ async function list(req, res, next) {
     if (!isBlank(category_id)) where.category_id = category_id;
     if (!isBlank(code)) where.code = { [Op.like]: `%${code}%` };
 
+    let order = [['createdAt', 'DESC']];
+    if (!isBlank(sort)) {
+      const parsedSort = parseSort(sort);
+      if (!parsedSort) {
+        const allowed = Object.keys(SORT_FIELDS).flatMap((key) => [key, `-${key}`]);
+        return res.status(400).json({ errors: [`sort must be one of: ${allowed.join(', ')}`] });
+      }
+      order = parsedSort;
+    }
+
     const queryOptions = {
       where,
       include: PRODUCT_INCLUDE,
-      order: [['createdAt', 'DESC']],
+      order,
     };
 
     if (!isBlank(limit)) queryOptions.limit = Math.max(0, parseInt(limit, 10) || 0);

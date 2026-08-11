@@ -178,9 +178,10 @@
 <tr><td>code</td><td>query</td><td>optional, partial (substring) match on product code — search endpoint</td></tr>
 <tr><td>limit</td><td>query</td><td>optional, maximum number of results — pagination endpoint</td></tr>
 <tr><td>offset</td><td>query</td><td>optional, number of results to skip — pagination endpoint</td></tr>
+<tr><td>sort</td><td>query</td><td>optional, one of <code>price</code>, <code>name</code>, <code>code</code>, <code>created_at</code>, or the same prefixed with <code>-</code> for descending (e.g. <code>-price</code>); defaults to newest first</td></tr>
 </tbody>
 </table>
-<p>Response: <code>200</code> with an array of products, each including its <code>Category</code> and its <code>ProductSizes</code> (with <code>Size</code> and <code>stock</code>).</p>
+<p>Response: <code>200</code> with an array of products, each including its <code>Category</code> and its <code>ProductSizes</code> (with <code>Size</code> and <code>stock</code>). <code>400</code> if <code>sort</code> is not one of the allowed values.</p>
 </article>
 
 <article>
