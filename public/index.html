@@ -176,6 +176,7 @@
 <tbody>
 <tr><td>category_id</td><td>query</td><td>optional, filter by category</td></tr>
 <tr><td>code</td><td>query</td><td>optional, partial (substring) match on product code — search endpoint</td></tr>
+<tr><td>q</td><td>query</td><td>optional, partial (substring) match against <code>code</code>, <code>name</code> or <code>description</code> (matches any of the three) — multi-field search endpoint</td></tr>
 <tr><td>limit</td><td>query</td><td>optional, maximum number of results — pagination endpoint</td></tr>
 <tr><td>offset</td><td>query</td><td>optional, number of results to skip — pagination endpoint</td></tr>
 <tr><td>sort</td><td>query</td><td>optional, one of <code>price</code>, <code>name</code>, <code>code</code>, <code>created_at</code>, or the same prefixed with <code>-</code> for descending (e.g. <code>-price</code>); defaults to newest first</td></tr>
