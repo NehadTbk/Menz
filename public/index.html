@@ -61,7 +61,7 @@
 <tr><td>remember_me</td><td>body</td><td>optional boolean, extends cookie lifetime when true</td></tr>
 </tbody>
 </table>
-<p>Response: <code>200</code> with <code>{ role }</code>, sets the session cookie. <code>401</code> with a generic error on invalid credentials (no indication whether the email exists).</p>
+<p>Response: <code>200</code> with <code>{ role }</code>, sets the session cookie. <code>401</code> with a generic error on invalid credentials (no indication whether the email exists). Rate limited to 5 attempts per 15 minutes per IP; <code>429</code> with <code>{ errors: [...] }</code> once exceeded.</p>
 </article>
 
 <article>
