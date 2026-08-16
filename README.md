@@ -82,3 +82,4 @@ utils/        Validators, JWT/reset-token helpers, mailer, upload config
 - [bcrypt](https://github.com/kelektiv/node.bcrypt.js) — password hashing
 - [multer](https://github.com/expressjs/multer) — multipart form / file upload handling
 - [nodemailer](https://nodemailer.com/) — sending password reset emails, including its [Ethereal test account](https://nodemailer.com/smtp/testing/) feature used for local development
+- [express-rate-limit](https://github.com/express-rate-limit/express-rate-limit) — rate limiting on `POST /api/login` to slow down brute-force attempts

@@ -116,13 +116,20 @@ function isAdminRequest(req) {
 async function list(req, res, next) {
   try {
     const {
-      category_id, code, limit, offset, sort,
+      category_id, code, q, limit, offset, sort,
     } = req.query;
     const where = {};
 
     if (!isAdminRequest(req)) where.active = true;
     if (!isBlank(category_id)) where.category_id = category_id;
     if (!isBlank(code)) where.code = { [Op.like]: `%${code}%` };
+    if (!isBlank(q)) {
+      where[Op.or] = [
+        { code: { [Op.like]: `%${q}%` } },
+        { name: { [Op.like]: `%${q}%` } },
+        { description: { [Op.like]: `%${q}%` } },
+      ];
+    }
 
     let order = [['createdAt', 'DESC']];
     if (!isBlank(sort)) {
